@@ -176,6 +176,27 @@ def _cleanup_all_on_delete(task: Task, db: Session):
             child.depends_on = json.dumps(child_deps) if child_deps else '[]'
     db.query(TaskDependency).filter(TaskDependency.task_id == task.id).delete()
     db.query(TaskDependency).filter(TaskDependency.dependency_id == task.id).delete()
-    for table in ['task_comments', 'task_attachments', 'task_labels', 'task_activity_log', 'task_failure_log', 'traces']:
-        db.execute(sa_text(f"DELETE FROM {table} WHERE task_id = :tid"), {"tid": task.id})
-    db.execute(sa_text("DELETE FROM task_relations WHERE parent_task_id = :tid OR child_task_id = :tid"), {"tid": task.id})
+    # Clean up task-specific tables (all exist in current schema)
+    required_tables = [
+        'task_comments', 'task_labels',
+        'task_activity_log', 'task_failure_log', 'traces',
+    ]
+    for table in required_tables:
+        try:
+            db.execute(sa_text(f"DELETE FROM {table} WHERE task_id = :tid"), {"tid": task.id})
+        except Exception as e:
+            logger.warning(f"[_cleanup] Failed to delete from {table}: {e}")
+    # Clean up unified attachments: delete links where this task is the entity
+    try:
+        db.execute(sa_text("DELETE FROM attachment_links WHERE entity_type = 'task' AND entity_id = :tid"), {"tid": task.id})
+    except Exception as e:
+        logger.warning(f"[_cleanup] Failed to delete attachment_links: {e}")
+    # Clean up human_input_requests (model has schema_json column but DB table doesn't → ORM cascade fails)
+    try:
+        db.execute(sa_text("DELETE FROM human_input_requests WHERE task_id = :tid"), {"tid": task.id})
+    except Exception as e:
+        logger.warning(f"[_cleanup] Failed to delete human_input_requests: {e}")
+    try:
+        db.execute(sa_text("DELETE FROM task_relations WHERE parent_task_id = :tid OR child_task_id = :tid"), {"tid": task.id})
+    except Exception as e:
+        logger.warning(f"[_cleanup] Failed to delete task_relations: {e}")

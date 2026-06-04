@@ -81,7 +81,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         exc_details["validation_errors"] = exc.errors()
     if hasattr(exc, 'body'):
         exc_details["body"] = str(exc.body)[:200]
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    logger.error("Unhandled exception: {}", str(exc), exc_info=True)
     
     return JSONResponse(
         status_code=500,

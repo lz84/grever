@@ -26,16 +26,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
 
-import pytest
-import os
-
-# Skip if LLM API not configured
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("LLM_URL"),
-    reason="LLM_URL not configured (requires LLM API)"
-)
-
-
 src_dir = str(Path(__file__).parent.parent.parent.parent)
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)

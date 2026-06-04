@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>争议仲裁 #20260326-001 - Nexus 驾驭平台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #1a1a2e;
+            overflow: hidden;
+        }
+
+        /* 16:9 容器 */
+        .slide-container {
+            width: 1600px;
+            height: 900px;
+            margin: 0 auto;
+            background: #F5F7FA;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 顶部栏 */
+        .header {
+            background: #5BA3D0;
+            color: white;
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 60px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .timer {
+            background: rgba(255,152,0,0.3);
+            padding: 6px 14px;
+            border-radius: 16px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* 主内容区 - 三栏布局 */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+            padding: 16px;
+            height: 780px;
+        }
+
+        /* 通用卡片样式 */
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 14px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* 左侧栏 */
+        .left-column {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* 左侧上部 - 争议焦点 + 推荐方案 */
+        .left-top {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        /* 争议焦点 */
+        .dispute-focus {
+            background: #FFEBEE;
+            border-left: 3px solid #F44336;
+            flex-shrink: 0;
+        }
+
+        .dispute-focus h3 {
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .dispute-focus p {
+            font-size: 11px;
+            color: #757575;
+            margin-bottom: 2px;
+        }
+
+        .urgency-badge {
+            display: inline-block;
+            background: #F44336;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 500;
+            margin-top: 4px;
+        }
+
+        /* 推荐方案 */
+        .recommended {
+            background: #E3F2FD;
+            border: 2px solid #5BA3D0;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .recommended-badge {
+            position: absolute;
+            top: -8px;
+            left: 14px;
+            background: #5BA3D0;
+            color: white;
+            padding: 2px 10px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .recommended h3 {
+            font-size: 15px;
+            margin-bottom: 8px;
+            color: #1976D2;
+        }
+
+        .recommended ul {
+            list-style: none;
+            margin-bottom: 10px;
+        }
+
+        .recommended li {
+            font-size: 11px;
+            padding: 3px 0;
+            padding-left: 16px;
+            position: relative;
+        }
+
+        .recommended li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #5BA3D0;
+            font-weight: bold;
+        }
+
+        .approve-btn {
+            background: #5BA3D0;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        /* 对比表格 - 底部对齐 */
+        .comparison-card {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 6px 4px;
+            text-align: center;
+            border-bottom: 1px solid #E0E0E0;
+        }
+
+        .comparison-table th {
+            background: #F5F7FA;
+            font-weight: 600;
+        }
+
+        .comparison-table th.recommended-col {
+            background: #E8F5E9;
+            color: #2E7D32;
+        }
+
+        .comparison-table td.recommended-col {
+            background: #F1F8E9;
+            font-weight: 600;
+        }
+
+        .stars {
+            color: #FFC107;
+            font-size: 12px;
+        }
+
+        /* 中间栏 */
+        .middle-column {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* 时间线 - 移到上面 */
+        .timeline-card {
+            flex-shrink: 0;
+        }
+
+        /* 各方论据 - 缩短 */
+        .arguments-card {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .agent-row {
+            display: flex;
+            gap: 10px;
+            flex-grow: 1;
+        }
+
+        .agent-arg {
+            flex: 1;
+            border: 1px solid #E0E0E0;
+            border-radius: 6px;
+            padding: 8px;
+            overflow: hidden;
+        }
+
+        .agent-arg.mazi {
+            border-top: 2px solid #2196F3;
+        }
+
+        .agent-arg.guzi {
+            border-top: 2px solid #FF9800;
+        }
+
+        .agent-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .agent-avatar {
+            font-size: 16px;
+        }
+
+        .agent-header h4 {
+            font-size: 11px;
+        }
+
+        .agent-header p {
+            font-size: 9px;
+            color: #757575;
+        }
+
+        .arg-section {
+            margin-bottom: 4px;
+        }
+
+        .arg-section h5 {
+            font-size: 9px;
+            color: #757575;
+            margin: 4px 0 2px;
+            text-transform: uppercase;
+        }
+
+        .arg-section ul {
+            list-style: none;
+        }
+
+        .arg-section li {
+            font-size: 10px;
+            padding: 1px 0;
+            padding-left: 12px;
+            position: relative;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .arg-section li::before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: #9E9E9E;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 20px;
+            overflow-y: auto;
+            max-height: 170px;
+        }
+
+        .timeline::before {
+            content: "";
+            position: absolute;
+            left: 6px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #E0E0E0;
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 8px;
+        }
+
+        .timeline-item::before {
+            content: "";
+            position: absolute;
+            left: -18px;
+            top: 3px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2196F3;
+            border: 2px solid white;
+        }
+
+        .timeline-item.timeout::before {
+            background: #F44336;
+        }
+
+        .timeline-time {
+            font-size: 9px;
+            color: #757575;
+        }
+
+        .timeline-content {
+            background: #F5F7FA;
+            padding: 6px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+        }
+
+        .objection {
+            background: #FFEBEE;
+            padding: 4px 6px;
+            border-radius: 3px;
+            margin-top: 4px;
+            font-size: 9px;
+        }
+
+        /* 右侧栏 */
+        .right-column {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* 右侧上部 - 相关资源 */
+        .right-top {
+            flex-shrink: 0;
+        }
+
+        /* 相关资源 */
+        .resources-card {
+            flex-shrink: 0;
+        }
+
+        /* 仲裁决定 - 底部对齐 */
+        .decision-card {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .resources-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+        }
+
+        .resource-item {
+            background: #F5F7FA;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .resource-icon {
+            font-size: 14px;
+        }
+
+        /* 仲裁决定 */
+        .decision-card {
+            flex-grow: 1;
+            background: #5BA3D0;
+            color: white;
+        }
+
+        .decision-card .card-title {
+            color: white;
+        }
+
+        .decision-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .decision-btn {
+            padding: 10px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: left;
+        }
+
+        .decision-btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .decision-btn.selected {
+            background: white;
+            color: #5BA3D0;
+            border-color: white;
+        }
+
+        .decision-btn.approve.selected {
+            background: #4CAF50;
+            border-color: #4CAF50;
+            color: white;
+        }
+
+        .note-textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 6px;
+            background: rgba(255,255,255,0.1);
+            color: white;
+            font-family: inherit;
+            font-size: 11px;
+            resize: none;
+            height: 50px;
+            margin-bottom: 8px;
+        }
+
+        .note-textarea::placeholder {
+            color: rgba(255,255,255,0.5);
+        }
+
+        .submit-btn {
+            background: white;
+            color: #5BA3D0;
+            border: none;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .submit-btn:hover {
+            background: #f0f0f0;
+        }
+
+        /* 滚动条美化 */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="slide-container">
+        <!-- 顶部栏 -->
+        <div class="header">
+            <h1>🔴 待仲裁争议 #20260326-001</h1>
+            <div class="timer">
+                <span>⏰</span>
+                <span id="timerText">已等待 23:15</span>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <!-- 左侧栏 -->
+            <div class="left-column">
+                <!-- 左侧上部 -->
+                <div class="left-top">
+                    <!-- 争议焦点 -->
+                    <div class="card dispute-focus">
+                        <h3>📌 技术选型 - 网页爬虫框架应该选哪个？</h3>
+                        <p>影响范围：舆情监控系统 - 数据采集模块</p>
+                        <p>任务编号：#MAK-58</p>
+                        <span class="urgency-badge">🔴 高紧急（阻塞 3 个下游任务）</span>
+                    </div>
+
+                    <!-- 推荐方案 -->
+                    <div class="card recommended">
+                        <span class="recommended-badge">🎯 智能体 推荐</span>
+                        <h3>混合使用方案</h3>
+                        <ul>
+                            <li>Playwright 处理登录和动态渲染（20% 页面）</li>
+                            <li>Scrapy 负责大批量静态页面爬取（80% 页面）</li>
+                            <li>预估成本：额外 2 小时集成代码</li>
+                            <li>预期收益：性能提升 300%</li>
+                        </ul>
+                        <button class="approve-btn" onclick="selectDecision('approve')">✅ 批准此方案</button>
+                    </div>
+                </div>
+
+                <!-- 对比表格 -->
+                <div class="card comparison-card">
+                    <div class="card-title">📊 方案对比</div>
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>维度</th>
+                                <th>麻子</th>
+                                <th class="recommended-col">推荐</th>
+                                <th>谷子</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>功能强度</td>
+                                <td><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                                <td class="recommended-col"><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                                <td><span class="stars">⭐⭐⭐⭐</span></td>
+                            </tr>
+                            <tr>
+                                <td>爬取速度</td>
+                                <td><span class="stars">⭐⭐⭐</span></td>
+                                <td class="recommended-col"><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                                <td><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                            </tr>
+                            <tr>
+                                <td>开发成本</td>
+                                <td><span class="stars">⭐⭐⭐⭐</span></td>
+                                <td class="recommended-col"><span class="stars">⭐⭐⭐</span></td>
+                                <td><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                            </tr>
+                            <tr>
+                                <td>维护成本</td>
+                                <td><span class="stars">⭐⭐⭐⭐</span></td>
+                                <td class="recommended-col"><span class="stars">⭐⭐⭐⭐</span></td>
+                                <td><span class="stars">⭐⭐⭐⭐⭐</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 中间栏 -->
+            <div class="middle-column">
+                <!-- 时间线 - 移到上面 -->
+                <div class="card timeline-card">
+                    <div class="card-title">🕐 协商历史</div>
+                    <div class="timeline">
+                        <div class="timeline-item">
+                            <div class="timeline-time">19:30</div>
+                            <div class="timeline-content">
+                                <strong>麻子：</strong>统一用 Playwright
+                                <div class="objection"><strong>谷子反对：</strong>性能损失太大 (2h→8h)</div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <div class="timeline-time">19:35</div>
+                            <div class="timeline-content">
+                                <strong>谷子：</strong>统一用 Scrapy
+                                <div class="objection"><strong>麻子反对：</strong>20% 页面失效</div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <div class="timeline-time">19:40</div>
+                            <div class="timeline-content">
+                                <strong>麻子：</strong>混合方案 (推荐)
+                                <div class="objection"><strong>谷子反对：</strong>维护成本高</div>
+                            </div>
+                        </div>
+                        <div class="timeline-item">
+                            <div class="timeline-time">19:45</div>
+                            <div class="timeline-content">
+                                <strong>谷子：</strong>各自实现
+                                <div class="objection"><strong>麻子反对：</strong>违反 DRY 原则</div>
+                            </div>
+                        </div>
+                        <div class="timeline-item timeout">
+                            <div class="timeline-time">19:50</div>
+                            <div class="timeline-content">
+                                <strong>⏰ 超时，推送仲裁</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 各方论据 - 移到下面 -->
+                <div class="card arguments-card">
+                    <div class="card-title">💬 各方论据</div>
+                    <div class="agent-row">
+                        <!-- 麻子 -->
+                        <div class="agent-arg mazi">
+                            <div class="agent-header">
+                                <span class="agent-avatar">🤖</span>
+                                <div>
+                                    <h4>麻子</h4>
+                                    <p>技术专家</p>
+                                </div>
+                            </div>
+                            <div class="arg-section">
+                                <h5>论据</h5>
+                                <ul>
+                                    <li>支持多浏览器</li>
+                                    <li>可处理动态渲染</li>
+                                    <li>自动等待元素加载</li>
+                                </ul>
+                            </div>
+                            <div class="arg-section">
+                                <h5>约束</h5>
+                                <ul>
+                                    <li>需安装浏览器依赖</li>
+                                    <li>速度较慢 (50 页/分钟)</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <!-- 谷子 -->
+                        <div class="agent-arg guzi">
+                            <div class="agent-header">
+                                <span class="agent-avatar">📊</span>
+                                <div>
+                                    <h4>谷子</h4>
+                                    <p>数据分析师</p>
+                                </div>
+                            </div>
+                            <div class="arg-section">
+                                <h5>论据</h5>
+                                <ul>
+                                    <li>速度快 (500 页/分钟)</li>
+                                    <li>生态成熟</li>
+                                    <li>内存占用低</li>
+                                </ul>
+                            </div>
+                            <div class="arg-section">
+                                <h5>约束</h5>
+                                <ul>
+                                    <li>动态页面需额外配置</li>
+                                    <li>不支持复杂交互</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧栏 -->
+            <div class="right-column">
+                <!-- 右侧上部 -->
+                <div class="right-top">
+                    <!-- 相关资源 -->
+                    <div class="card resources-card">
+                        <div class="card-title">📎 相关资源</div>
+                    <div class="resources-grid">
+                        <div class="resource-item">
+                            <span class="resource-icon">📋</span>
+                            <span>任务 #MAK-58</span>
+                        </div>
+                        <div class="resource-item">
+                            <span class="resource-icon">🤖</span>
+                            <span>智能体 画像</span>
+                        </div>
+                        <div class="resource-item">
+                            <span class="resource-icon">📚</span>
+                            <span>历史决策 (3 次)</span>
+                        </div>
+                        <div class="resource-item">
+                            <span class="resource-icon">🔗</span>
+                            <span>依赖图 (阻塞 3 个)</span>
+                        </div>
+                    </div>
+                </div>
+                </div>
+
+                <!-- 仲裁决定 -->
+                <div class="card decision-card">
+                    <div class="card-title">⚖️ 仲裁决定</div>
+                    <div class="decision-options">
+                        <button class="decision-btn approve selected" onclick="selectDecision('approve')" id="btn-approve">✅ 批准推荐</button>
+                        <button class="decision-btn" onclick="selectDecision('playwright')" id="btn-playwright">❌ Playwright</button>
+                        <button class="decision-btn" onclick="selectDecision('scrapy')" id="btn-scrapy">❌ Scrapy</button>
+                        <button class="decision-btn" onclick="selectDecision('custom')" id="btn-custom">📝 自定义</button>
+                    </div>
+                    <textarea class="note-textarea" placeholder="备注（可选）..."></textarea>
+                    <button class="submit-btn" onclick="submitDecision()">提交决定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 计时器
+        let totalSeconds = 23 * 60 + 15;
+        
+        setInterval(() => {
+            totalSeconds++;
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = totalSeconds % 60;
+            document.getElementById('timerText').textContent = 
+                `已等待 ${mins}:${secs.toString().padStart(2, '0')}`;
+        }, 1000);
+
+        // 选择决定
+        let selectedDecision = 'approve';
+        
+        function selectDecision(decision) {
+            selectedDecision = decision;
+            document.querySelectorAll('.decision-btn').forEach(btn => {
+                btn.classList.remove('selected');
+            });
+            document.getElementById(`btn-${decision}`).classList.add('selected');
+        }
+
+        // 提交决定
+        function submitDecision() {
+            const titles = {
+                'approve': '批准推荐方案',
+                'playwright': '选择 Playwright',
+                'scrapy': '选择 Scrapy',
+                'custom': '自定义方案'
+            };
+            alert(`✅ 已提交：${titles[selectedDecision]}\n\n智能体 将按此决定执行任务。`);
+        }
+    </script>
+</body>
+</html>

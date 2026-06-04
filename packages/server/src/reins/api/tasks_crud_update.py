@@ -31,7 +31,12 @@ def _validate_tag_update(task_data, strict_mode, update_fields):
         capability_tags = update_fields['capability_tags']
         cap_list = []
         if isinstance(capability_tags, dict):
-            for dim_caps in capability_tags.values():
+            valid_dims = {"business", "professional", "technical", "management"}
+            # 4-dimension format: {"technical": "backend", ...} → skip tag validation
+            if all(isinstance(v, str) for v in capability_tags.values()):
+                return [], []
+            # Tag ID list format: {"technical": ["tag-001"], ...}
+            for dim, dim_caps in capability_tags.items():
                 if isinstance(dim_caps, list):
                     cap_list.extend(dim_caps)
         elif isinstance(capability_tags, list):
@@ -191,7 +196,7 @@ def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends(get_d
         except Exception as e:
             logger.warning(f"[P1-01] execution_logs task_start warning: {e}")
 
-    task.updated_at = datetime.now()
+    task.updated_at = int(datetime.now().timestamp())
     db.commit()
     db.refresh(task)
 
@@ -214,6 +219,32 @@ def update_task(task_id: str, task_data: TaskUpdate, db: Session = Depends(get_d
         result["auto_added_tags"] = auto_added_tags
         result["auto_added_reason"] = f"auto-added {len(auto_added_tags)} prerequisite tags"
     return result
+
+
+@router.put("/{task_id}/depends_on", status_code=status.HTTP_200_OK)
+def update_task_depends_on(
+    task_id: str,
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    """专门更新任务的 depends_on 依赖关系"""
+    from reins.api.tasks_crud_helpers import _sync_depends_on_all, _parse_json_list
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    new_deps = data.get("depends_on", [])
+    if not isinstance(new_deps, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="depends_on must be a list")
+
+    old_deps = _parse_json_list(task.depends_on)
+    task.depends_on = json.dumps(new_deps) if new_deps else None
+    _sync_depends_on_all(task_id, new_deps, old_deps, db=db)
+    task.updated_at = int(datetime.now().timestamp())
+    db.commit()
+    db.refresh(task)
+    return {"success": True, "id": task_id, "depends_on": new_deps}
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
@@ -258,7 +289,7 @@ def patch_task(task_id: str, task_data: dict, db: Session = Depends(get_db)):
             setattr(task, key, value)
 
     new_assigned_agent = getattr(task, 'assigned_agent', None)
-    task.updated_at = datetime.now()
+    task.updated_at = int(datetime.now().timestamp())
     db.commit()
     db.refresh(task)
 
