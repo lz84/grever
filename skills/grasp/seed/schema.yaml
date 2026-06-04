@@ -1,0 +1,61 @@
+# Grasp Skill 初始认知类型定义
+# 用于系统初始化
+
+cognitionTypes:
+  - id: fact
+    name: 事实
+    description: 客观事实、定义、知识
+    schema:
+      type: object
+      properties:
+        content:
+          type: string
+        source:
+          type: string
+      required:
+        - content
+  
+  - id: pattern
+    name: 模式
+    description: 行为模式、思维模式、解决方案模式
+    schema:
+      type: object
+      properties:
+        pattern_name:
+          type: string
+        description:
+          type: string
+        application_scenarios:
+          type: array
+          items:
+            type: string
+      required:
+        - pattern_name
+  
+  - id: lesson
+    name: 经验
+    description: 从任务执行中总结的经验教训
+    schema:
+      type: object
+      properties:
+        lesson_content:
+          type: string
+        context:
+          type: string
+        outcome:
+          type: string
+      required:
+        - lesson_content
+  
+  - id: meta
+    name: 元认知
+    description: 关于认知本身的认知（学习如何学习）
+    schema:
+      type: object
+      properties:
+        meta_content:
+          type: string
+        learning_method:
+          type: string
+      required:
+        - meta_content

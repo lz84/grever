@@ -1,0 +1,3 @@
+-- Migration: 012_add_workflow_columns_to_projects
+-- Status: DEPRECATED - workflow columns already ensured by db.create_tables()
+-- No SQL to execute.

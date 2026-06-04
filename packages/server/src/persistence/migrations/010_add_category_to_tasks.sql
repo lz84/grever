@@ -1,0 +1,3 @@
+-- Migration: 010_add_category_to_tasks
+-- Status: DEPRECATED - category column already ensured by db.create_tables()
+-- No SQL to execute.

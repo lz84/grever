@@ -1,0 +1,1 @@
+{"cognition_id": "cog-557bba480735", "type": "fact", "content": "test content", "tags": ["test"], "confidence": 0.95, "quality_score": 1.0, "metadata": {}, "source": {"agent_id": "test", "task_id": "test", "channel": "test"}, "status": "published", "created_at": "2026-04-06T13:56:35.197002", "updated_at": "2026-04-06T13:56:35.197003"}

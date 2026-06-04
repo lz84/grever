@@ -1,0 +1,5 @@
+-- Migration: 015_add_task_timeout_fields
+-- Description: Add timeout_reason column to tasks table (P2 task timeout recovery)
+-- NOTE: This migration is a placeholder. The actual column addition is handled
+-- in server.py's startup migration with proper column existence checks.
+-- No SQL to execute here.

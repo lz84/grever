@@ -1,0 +1,4 @@
+-- Migration: 009_add_agent_load_config
+-- Status: DEPRECATED - agent columns already ensured by server.py inline migration
+-- (server.py adds max_concurrent_tasks, load_threshold, recovery_threshold columns)
+-- No SQL to execute.

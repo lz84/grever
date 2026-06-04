@@ -1,0 +1,76 @@
+# Grasp Skill 初始标签体系
+# 用于认知分类和组织
+
+rootTags:
+  - 任务分解
+  - 最佳实践
+  - 错误模式
+  - 工具使用
+  - 方法论
+  - 性能优化
+  - 安全规范
+
+tagRules:
+  # 任务分解相关
+  - parent: 任务分解
+    children:
+      - 依赖分析
+      - 并行调度
+      - 任务拆解
+      - 优先级评估
+    allowed: true
+  
+  # 最佳实践相关
+  - parent: 最佳实践
+    children:
+      - 代码规范
+      - 架构设计
+      - 测试策略
+      - 部署流程
+    allowed: true
+  
+  # 错误模式相关
+  - parent: 错误模式
+    children:
+      - 常见错误
+      - 性能问题
+      - 安全问题
+      - 架构缺陷
+    allowed: true
+  
+  # 工具使用相关
+  - parent: 工具使用
+    children:
+      - Docker
+      - Kubernetes
+      - API 调用
+      - 命令行工具
+      - 开发工具
+    allowed: true
+  
+  # 方法论相关
+  - parent: 方法论
+    children:
+      - MECE 原则
+      - 敏捷开发
+      - DevOps
+      - 设计模式
+    allowed: true
+  
+  # 性能优化相关
+  - parent: 性能优化
+    children:
+      - 缓存策略
+      - 数据库优化
+      - 网络优化
+      - 并发处理
+    allowed: true
+  
+  # 安全规范相关
+  - parent: 安全规范
+    children:
+      - 认证授权
+      - 数据加密
+      - 输入验证
+      - 安全审计
+    allowed: true

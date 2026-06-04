@@ -1,0 +1,5 @@
+-- Migration: 014_add_task_retry_fields
+-- Description: Task retry fields (MAK-235) - no-op, columns already ensured by server.py
+-- NOTE: This is a placeholder. The actual column additions are handled
+-- in server.py's startup migration (around line 290-340) with proper
+-- column existence checks. No SQL to execute here.

@@ -1,0 +1,4 @@
+-- Migration: 008_add_goal_id_to_projects
+-- Status: DEPRECATED - goal_id column already ensured by server.py inline migration
+-- (server.py creates projects with goal_id column via db.create_tables())
+-- No SQL to execute.
