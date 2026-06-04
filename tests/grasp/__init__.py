@@ -1,3 +1,0 @@
-"""
-Grasp parsers test suite
-"""
