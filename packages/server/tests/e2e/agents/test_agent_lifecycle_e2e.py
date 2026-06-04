@@ -21,6 +21,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timedelta
 
+import pytest
+import os
+
+# Skip if Hermes gateway not configured
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("HERMES_URL"),
+    reason="HERMES_URL not configured (requires Hermes gateway)"
+)
+
+
 src_dir = str(Path(__file__).parent.parent.parent.parent)
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)

@@ -8,6 +8,16 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from services.goal_decomposition import (
+
+import pytest
+import os
+
+# Skip if LLM API not configured
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("LLM_URL"),
+    reason="LLM_URL not configured (requires LLM API)"
+)
+
     decompose_goal,
     create_tasks_from_decomposition,
     decompose_and_create_tasks,
