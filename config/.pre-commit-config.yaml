@@ -1,0 +1,72 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 23.1.0
+    hooks:
+      - id: black
+        language_version: python3.11
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        language_version: python3.11
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        language_version: python3.11
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.0.0
+    hooks:
+      - id: mypy
+        language_version: python3.11
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: [--ini, bandit.ini]
+  - repo: https://github.com/PyCQA/doc8
+    rev: 1.1.0
+    hooks:
+      - id: doc8
+        types: [markdown, text]
+  - repo: https://github.com/PyCQA/autoflake
+    rev: 1.7.1
+    hooks:
+      - id: autoflake
+        args: [--remove-all-unused-imports, --remove-unused-variables]
+  - repo: https://github.com/PyCQA/pep8-naming
+    rev: 0.13.3
+    hooks:
+      - id: pep8-naming
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-docstring-first-line
+      - id: check-symlinks
+      - id: detect-private-key
+      - id: detect-aws-credentials
+      - id: detect-private-key
+      - id: fix-byte-order-marker
+      - id: name-tests-test
+      - id: no-commit-to-branch
+      - id: pretty-format-json
+      - id: sort-lines
+      - id: validate-commit-msg
+        args: [--config, .commit-msg-config]
+  - repo: https://github.com/PyCQA/pylint
+    rev: 3.2.0
+    hooks:
+      - id: pylint
+        args: [--rcfile=.pylintrc]
+  - repo: https://github.com/PyCQA/pyright
+    rev: 1.1.328
+    hooks:
+      - id: pyright
+        language_version: python3.11

@@ -1,0 +1,1 @@
+# Industry pack exporter tests

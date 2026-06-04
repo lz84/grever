@@ -262,6 +262,27 @@ export const INDUSTRY_PACKS = {
   REMOVE: (packId: string) => `/industry-packs/${packId}`,
   ADD_CONTENT: (packId: string) => `/industry-packs/${packId}/contents`,
   REMOVE_CONTENT: (packId: string, contentType: string, contentId: string) => `/industry-packs/${packId}/contents/${contentType}/${contentId}`,
+  VERSIONS: (packId: string) => `/industry-packs/${packId}/versions`,
+  EXPORT: (packId: string) => `/industry-packs/${packId}/export`,
+  IMPORT: `/industry-packs/import`,
+  DIFF: (packA: string, packB: string) => `/industry-packs/${packA}/diff/${packB}`,
+  VALIDATE: (packId: string) => `/industry-packs/${packId}/validate`,
+} as const
+
+export const PROMPT_TEMPLATES = {
+  LIST: `/prompt-templates`,
+} as const
+
+export const SOPS = {
+  LIST: `/sops`,
+} as const
+
+export const CHECKLISTS = {
+  LIST: `/checklists`,
+} as const
+
+export const REFERENCE_DATA = {
+  LIST: `/reference-data`,
 } as const
 
 // ==================== 4. 人机协同（含争议仲裁） ====================

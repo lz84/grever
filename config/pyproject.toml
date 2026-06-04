@@ -1,0 +1,99 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-reins"
+version = "0.1.0"
+description = "Nexus Reins - Agent Collaboration Orchestration Platform"
+readme = "README.md"
+authors = [
+    {name = "Nexus Team", email = "team@nexus.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn>=0.30.1",
+    "sqlalchemy>=2.0.31",
+    "pydantic>=2.6.1",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.1",
+    "pydantic-settings>=2.2.0",
+    "python-jose>=3.3.0",
+    "passlib>=1.7.4",
+    "python-telegram-bot>=20.7",
+    "jinja2>=3.1.2",
+    "aiofiles>=23.2.0",
+    "asyncio>=3.4.3",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+development = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "flake8>=6.0.0",
+    "black>=23.1.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "bandit>=1.7.5",
+    "doc8>=1.1.0",
+    "autoflake>=1.7.1",
+    "pep8-naming>=0.13.3",
+    "pre-commit>=3.7.0",
+    "pylint>=3.2.0",
+    "pyright>=1.1.328",
+]
+
+[project.scripts]
+reins = "reins.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["reins*"]
+
+[tool.setuptools.package-data]
+reins = ["*.py", "*.pyi"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = "\\.pyi?$"
+exclude = """
+  /migrations/
+  | /venv/
+  | /\\.venv/
+  | /\\.git/
+  | /\\.tox/
+  | /\\.pytest_cache/
+  | /\\.mypy_cache/
+  | /\\.coverage
+  | /htmlcov/
+  | /\\.env/
+  | /data/
+"""
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = "reins"
+known_third_party = ["fastapi", "uvicorn", "sqlalchemy", "pydantic", "httpx", "python_dotenv", "pydantic_settings", "python_jose", "passlib", "python_telegram_bot", "jinja2", "aiofiles", "asyncio", "python_multipart"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_no_return = true
+warn_return_any = true

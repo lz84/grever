@@ -26,6 +26,8 @@ const routeTitles: Record<string, string> = {
   '/cognitive/assessment': '认知中心 / 评估',
   '/cognitive/inject': '认知中心 / 数据导入',
   '/solutions': '驾驭中心 / 方案对比',
+  '/industry/tags': '能力库 / 能力标签',
+  '/industry/packs': '能力库 / 行业包',
 }
 
 export default function MainLayout() {

@@ -10,6 +10,7 @@ import {
   GOALS, PROJECTS, TASKS, SCENARIOS, WORKFLOWS,
   SCHEDULER, TIMEOUT, TRACES,
   AGENTS, AGENT_MATCHING, AGENT_PLATFORMS, CAPABILITIES, INDUSTRY_TAGS, INDUSTRY_PACKS,
+  PROMPT_TEMPLATES, SOPS, CHECKLISTS, REFERENCE_DATA,
   HUMAN_INPUT, HUMAN_REVIEW, DISPUTES, SOLUTIONS,
   GRASP, CONTEXT, KNOWLEDGE_INJECTOR,
   MCP_SERVERS, SKILLS, ATTACHMENTS, ARTIFACTS, REPORTS,
@@ -532,6 +533,124 @@ export const attachmentsApi = {
       createdBy: resp.headers.get('X-Attachment-CreatedBy'),
     }
   },
+}
+
+// ==================== Industry Pack Extended API ====================
+
+export interface PackVersion {
+  id: string
+  pack_id: string
+  version: string
+  operation: string
+  created_at: number
+  notes?: string
+  created_by?: string
+}
+
+export interface PackExportOptions {
+  format: 'nexus-pack' | 'json'
+  include_resources?: boolean
+}
+
+export interface PackImportOptions {
+  strategy: 'create' | 'upsert' | 'force'
+  auto_install_deps?: boolean
+}
+
+export interface PackImportResult {
+  success: boolean
+  pack_id?: string
+  message?: string
+  errors?: string[]
+}
+
+export interface PackValidationResult {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+}
+
+export const industryPacksExtendedApi = {
+  versions: (packId: string) =>
+    request<{ items: PackVersion[]; total: number }>(INDUSTRY_PACKS.VERSIONS(packId)),
+  exportPack: (packId: string, options: PackExportOptions) =>
+    request<Blob>(INDUSTRY_PACKS.EXPORT(packId), {
+      method: 'POST',
+      body: JSON.stringify(options),
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  importPack: (formData: FormData, options: PackImportOptions) =>
+    request<PackImportResult>(INDUSTRY_PACKS.IMPORT, {
+      method: 'POST',
+      body: formData,
+    }),
+  diffPacks: (packA: string, packB: string) =>
+    request<any>(INDUSTRY_PACKS.DIFF(packA, packB)),
+  validatePack: (packId: string) =>
+    request<PackValidationResult>(INDUSTRY_PACKS.VALIDATE(packId), { method: 'POST' }),
+}
+
+// ==================== Prompt Templates / SOP / Checklist / Reference Data API ====================
+
+export interface PromptTemplate {
+  id: string
+  pack_id?: string
+  name: string
+  content: string
+  description?: string
+  created_at: number
+  updated_at?: number
+}
+
+export interface SOP {
+  id: string
+  pack_id?: string
+  name: string
+  steps: any[]
+  description?: string
+  created_at: number
+  updated_at?: number
+}
+
+export interface Checklist {
+  id: string
+  pack_id?: string
+  name: string
+  items: any[]
+  description?: string
+  created_at: number
+  updated_at?: number
+}
+
+export interface ReferenceData {
+  id: string
+  pack_id?: string
+  name: string
+  data_type: string
+  content: any
+  description?: string
+  created_at: number
+  updated_at?: number
+}
+
+export const promptTemplatesApi = {
+  list: (params?: { pack_id?: string }) =>
+    request<{ items: PromptTemplate[]; total: number }>(PROMPT_TEMPLATES.LIST, { params }),
+}
+
+export const sopsApi = {
+  list: (params?: { pack_id?: string }) =>
+    request<{ items: SOP[]; total: number }>(SOPS.LIST, { params }),
+}
+
+export const checklistsApi = {
+  list: (params?: { pack_id?: string }) =>
+    request<{ items: Checklist[]; total: number }>(CHECKLISTS.LIST, { params }),
+}
+
+export const referenceDataApi = {
+  list: (params?: { pack_id?: string }) =>
+    request<{ items: ReferenceData[]; total: number }>(REFERENCE_DATA.LIST, { params }),
 }
 
 // ==================== Re-export ====================

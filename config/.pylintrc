@@ -1,0 +1,750 @@
+[MASTER]
+# Ignore files or directories with a matching name.
+ignore=venv,__pycache__,.git,.tox,.mypy_cache,.pytest_cache,.coverage,htmlcov,.env,data,migrations,tests
+
+# Add files or directories to the python path.
+#init-hook='import sys; sys.path.append("/path/to/my/project")'
+
+# List of plugins to load (default: None).
+load-plugins=pylint.extensions.docparams,pylint.extensions.docstyle,pylint.extensions.mccabe,pylint.extensions.bad_builtin
+
+# List of packages that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of packages that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as builtins.
+#builtin=math,sys,os,os.path,errno,types,random
+
+# List of modules that should be considered as standard ones.
+#standard-library=math,sys,os,os.path,

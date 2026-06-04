@@ -64,6 +64,22 @@ from reach.skills import router as skills_router
 from reach.industry.api.industry_tags_routes import router as industry_tags_router
 from reach.industry.api.industry_packs_routes import router as industry_packs_router
 
+# Sprint 110: 行业包导入
+from reins.api.industry_pack_import import router as industry_pack_import_router
+
+# Sprint 112+113: 版本管理 + 校验功能
+from reins.api.industry_pack_versions_routes import router as industry_pack_versions_router
+from reins.api.industry_pack_validate import router as industry_pack_validate_router
+
+# Sprint 109: 行业包导出
+from reins.api.industry_pack_export import router as industry_pack_export_router
+
+# Sprint 111: 行业包子模块 (空 router，后续 sprint 实现)
+from reins.api.prompt_templates import router as prompt_templates_router
+from reins.api.sops import router as sops_router
+from reins.api.checklists import router as checklists_router
+from reins.api.reference_data import router as reference_data_router
+
 # Sprint 36: 项目级 Workflow (task-tree/diagram)
 
 # Sprint 84: 附件路由
@@ -118,6 +134,16 @@ def create_app() -> FastAPI:
         skills_router,
         industry_tags_router,
         industry_packs_router,
+        industry_pack_import_router,
+        industry_pack_versions_router,
+        industry_pack_validate_router,
+        # Sprint 109: 行业包导出
+        industry_pack_export_router,
+        # Sprint 111: 行业包子模块
+        prompt_templates_router,
+        sops_router,
+        checklists_router,
+        reference_data_router,
         # Phase 2.2: 新补代码模块
         genes_router, distillation_router, evolution_events_router, a2a_router,
         trust_router, roles_router, agent_task_router,

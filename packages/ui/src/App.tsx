@@ -42,7 +42,8 @@ import ScenarioFavorites from './pages/reach/scenario/ScenarioFavorites'
 import ScenarioCenter from './pages/reach/scenario/ScenarioCenter'
 import ScenarioCreate from './pages/reach/scenario/ScenarioCreate'
 import IndustryTagsPage from './pages/reach/IndustryTagsPage'
-import IndustryPacksPage from './pages/reach/IndustryPacksPage'
+import IndustryPacksPage from './pages/industry/IndustryPacksPage'
+import IndustryPackDetailPage from './pages/industry/IndustryPackDetailPage'
 import HumanInputDashboard from './pages/reins/human-input/HumanInputDashboard'
 import { HumanInputAnalytics } from './pages/reins/human-input/HumanInputAnalytics'
 import HumanInputPage from './pages/reins/human-input/HumanInputPage'
@@ -112,6 +113,7 @@ export default function App() {
           <Route path="/system/capabilities" element={<CapabilitiesPage />} />
           <Route path="/industry/tags" element={<IndustryTagsPage />} />
           <Route path="/industry/packs" element={<IndustryPacksPage />} />
+          <Route path="/industry-packs/:id" element={<IndustryPackDetailPage />} />
           <Route path="/system/artifacts" element={<ArtifactList />} />
 
           {/* 可视化 */}

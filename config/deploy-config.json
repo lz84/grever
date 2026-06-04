@@ -1,0 +1,46 @@
+{
+  "deployment": {
+    "environment": "production",
+    "version": "1.0.0",
+    "target": {
+      "backend": {
+        "host": "0.0.0.0",
+        "port": 8090,
+        "workers": 4,
+        "timeout": 120
+      },
+      "frontend": {
+        "host": "0.0.0.0",
+        "port": 3000,
+        "build_dir": "./dist"
+      }
+    },
+    "database": {
+      "type": "sqlite",
+      "path": "D:\\work\\research\\agents-nexus\\packages\\server\\data\\reins.db",
+      "backup_enabled": true,
+      "backup_retention_days": 30
+    },
+    "logging": {
+      "level": "INFO",
+      "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+      "file": "D:\\work\\research\\agents-nexus\\logs\\app.log"
+    },
+    "security": {
+      "jwt_secret": "${JWT_SECRET}",
+      "api_rate_limit": 1000,
+      "ssl_enabled": true
+    },
+    "monitoring": {
+      "enabled": true,
+      "metrics_port": 9090,
+      "health_check_interval": 30
+    },
+    "notifications": {
+      "feishu": {
+        "webhook_url": "${FEISHU_WEBHOOK_URL}",
+        "timeout": 10
+      }
+    }
+  }
+}
