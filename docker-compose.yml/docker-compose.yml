@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  grever:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: grever
+    ports:
+      - "80:80"
+      - "8096:8096"
+    volumes:
+      - ./data:/app/packages/server/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - SQLITE_PATH=/app/packages/server/data/reins.db
+      - SQLALCHEMY_DATABASE_URL=sqlite:///app/packages/server/data/reins.db
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - grever-network
+
+  redis:
+    image: redis:alpine
+    container_name: grever-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - grever-network
+
+networks:
+  grever-network:
+    driver: bridge
+
+volumes:
+  redis_data:
