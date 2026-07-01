@@ -218,9 +218,9 @@ export default function SolutionCenter() {
     goalsApi.list()
       .then(data => {
         const allGoals = Array.isArray(data) ? data : []
-        const explorationGoals = allGoals.filter(g => g.mode === 'exploration')
-        setGoals(explorationGoals)
-        if (explorationGoals.length > 0) setSelectedGoalId(explorationGoals[0].id)
+        const researchGoals = allGoals.filter(g => g.mode === 'research')
+        setGoals(researchGoals)
+        if (researchGoals.length > 0) setSelectedGoalId(researchGoals[0].id)
       })
       .catch(() => {})
   }, [])

@@ -9,11 +9,13 @@ Agent 注册 (Agent Registration) - DB 驱动版
 """
 
 from typing import List, Optional
-from models import AgentInfo, AgentStatus, TriggerMode
+from models import Agent, AgentInfo, AgentStatus, TriggerMode
 from datetime import datetime, timedelta
-from sqlalchemy import text
 import json
 from loguru import logger
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
 
 class AgentRegistry:
     """
@@ -36,24 +38,56 @@ class AgentRegistry:
             from reins.common.database import get_db_session
             self._get_db = get_db_session
 
-    def _db(self):
-        """获取数据库连接"""
-        conn = self._get_db()
-        return conn
+    def _db(self) -> Session:
+        """获取数据库 session"""
+        return self._get_db()
 
     # ==================== 内部工具方法 ====================
 
     def _row_to_agent(self, row) -> AgentInfo:
         """将 DB row 转为 AgentInfo 对象"""
-        if isinstance(row, dict):
+        if isinstance(row, Agent):
+            agent = row
+        elif isinstance(row, dict):
             data = row
+            agent = type('_AgentProxy', (), data)
         elif hasattr(row, '_mapping'):
             data = dict(row._mapping)
+            agent = type('_AgentProxy', (), data)
         else:
             data = dict(row) if hasattr(row, '__iter__') else {}
+            agent = type('_AgentProxy', (), data)
+
+        if isinstance(row, Agent):
+            # Direct ORM object
+            caps_raw = agent.capability_tags
+            meta_raw = agent.meta_data
+            name = agent.name
+            addr = agent.address
+            load = agent.load
+            ct = agent.current_tasks
+            tm = agent.trigger_mode
+            poll = agent.poll_interval_seconds
+            model = agent.model_name
+            reg_at = agent.registered_at
+            hb = agent.last_heartbeat
+        elif isinstance(agent, type) or hasattr(agent, '__dict__'):
+            caps_raw = getattr(agent, 'capability_tags', getattr(agent, 'capabilities', '{}'))
+            meta_raw = getattr(agent, 'metadata', '{}')
+            name = getattr(agent, 'name', '')
+            addr = getattr(agent, 'address', None)
+            load = getattr(agent, 'load', 0) or 0
+            ct = getattr(agent, 'current_tasks', 0) or 0
+            tm = getattr(agent, 'trigger_mode', 'sse')
+            poll = getattr(agent, 'poll_interval_seconds', 10) or 10
+            model = getattr(agent, 'model_name', '')
+            reg_at = getattr(agent, 'registered_at', datetime.now())
+            hb = getattr(agent, 'last_heartbeat', datetime.now())
+        else:
+            return None
 
         # 解析 capability_tags JSON
-        caps = data.get('capability_tags', data.get('capabilities', '{}'))
+        caps = caps_raw
         if isinstance(caps, str):
             try:
                 caps = json.loads(caps)
@@ -63,7 +97,7 @@ class AgentRegistry:
             caps = {"business": [], "professional": [], "technical": caps, "management": []}
 
         # 解析 metadata JSON
-        meta = data.get('metadata', '{}')
+        meta = meta_raw
         if isinstance(meta, str):
             try:
                 meta = json.loads(meta)
@@ -71,19 +105,20 @@ class AgentRegistry:
                 meta = {}
 
         # 解析状态字符串
-        status_str = data.get('status', 'offline')
+        status_str = getattr(agent, 'status', 'offline') if isinstance(agent, Agent) else str(getattr(agent, 'status', 'offline'))
         try:
             status = AgentStatus(status_str)
         except (ValueError, TypeError):
             status = AgentStatus.OFFLINE
 
         # 解析 trigger_mode
-        trigger_mode = data.get('trigger_mode', 'sse')
-        if isinstance(trigger_mode, str):
+        if isinstance(tm, str):
             try:
-                trigger_mode = TriggerMode(trigger_mode)
+                trigger_mode = TriggerMode(tm)
             except (ValueError, TypeError):
                 trigger_mode = TriggerMode.SSE
+        else:
+            trigger_mode = tm
 
         # 解析时间
         def parse_dt(val):
@@ -97,20 +132,20 @@ class AgentRegistry:
                 return datetime.now()
 
         return AgentInfo(
-            id=str(data.get('id', '')),
-            name=str(data.get('name', '')),
+            id=str(getattr(agent, 'id', '')),
+            name=str(name),
             capabilities=caps,
             status=status,
-            address=data.get('address'),
+            address=addr,
             metadata=meta,
-            load=int(data.get('load', 0) or 0),
-            current_load=int(data.get('load', 0) or 0),  # 兼容 assignment.py
-            current_tasks=int(data.get('current_tasks', 0) or 0),
+            load=int(load),
+            current_load=int(load),  # 兼容 assignment.py
+            current_tasks=int(ct),
             trigger_mode=trigger_mode,
-            poll_interval_seconds=int(data.get('poll_interval_seconds', 10) or 10),
-            model_name=str(data.get('model_name', '')),
-            registered_at=parse_dt(data.get('registered_at')),
-            last_heartbeat=parse_dt(data.get('last_heartbeat')),
+            poll_interval_seconds=int(poll),
+            model_name=str(model),
+            registered_at=parse_dt(reg_at),
+            last_heartbeat=parse_dt(hb),
         )
 
     # ==================== 公开方法 ====================
@@ -129,93 +164,65 @@ class AgentRegistry:
     ) -> AgentInfo:
         """
         注册 Agent（UPSERT：存在则更新，不存在则插入）
-        
+
         last_heartbeat: 可选，传入 DB 中已有的 heartbeat 以避免被覆盖。
         用于 server 重启后同步，避免 HeartbeatOfflineDetector 误判。
         """
         now = datetime.now()
         tm = trigger_mode.value if isinstance(trigger_mode, TriggerMode) else trigger_mode
-        
+
         # 如果传入了已有的 heartbeat，用它；否则用当前时间
         hb = last_heartbeat if last_heartbeat else now
 
         conn = self._db()
         # 先检查是否存在
-        existing = conn.execute(text(
-            "SELECT id FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
+        existing = conn.query(Agent).filter(Agent.id == agent_id).first()
+
+        # Convert old array format to new object format if needed
+        if isinstance(capabilities, list):
+            cap_json = json.dumps({
+                "business": [], "professional": [],
+                "technical": capabilities, "management": []
+            })
+        else:
+            cap_json = capabilities if isinstance(capabilities, str) else json.dumps(capabilities or {})
 
         if existing:
             # UPDATE
-            # Convert old array format to new object format if needed
-            if isinstance(capabilities, list):
-                cap_json = json.dumps({
-                    "business": [], "professional": [],
-                    "technical": capabilities, "management": []
-                })
-            else:
-                cap_json = capabilities if isinstance(capabilities, str) else json.dumps(capabilities or {})
-            conn.execute(text("""
-                UPDATE agents
-                SET name = :name,
-                    capability_tags = :caps,
-                    address = :addr,
-                    metadata = :meta,
-                    last_heartbeat = :hb,
-                    status = :status,
-                    trigger_mode = :tm,
-                    poll_interval_seconds = :poll,
-                    model_name = :model,
-                    updated_at = :now
-                WHERE id = :aid
-            """), {
-                "aid": agent_id,
-                "name": name,
-                "caps": cap_json,
-                "addr": address or "",
-                "meta": json.dumps(metadata or {}),
-                "hb": hb,
-                "status": AgentStatus.ONLINE.value,
-                "tm": tm,
-                "poll": poll_interval_seconds,
-                "model": model_name,
-                "now": now,
-            })
+            existing.name = name
+            existing.capability_tags = cap_json
+            existing.address = address or ""
+            existing.meta_data = json.dumps(metadata or {})
+            existing.last_heartbeat = hb
+            existing.status = AgentStatus.ONLINE.value
+            existing.trigger_mode = tm
+            existing.poll_interval_seconds = poll_interval_seconds
+            existing.model_name = model_name
+            existing.updated_at = now
+            conn.commit()
         else:
             # INSERT
-            # Convert old array format to new object format if needed
-            if isinstance(capabilities, list):
-                cap_json = json.dumps({
-                    "business": [], "professional": [],
-                    "technical": capabilities, "management": []
-                })
-            else:
-                cap_json = capabilities if isinstance(capabilities, str) else json.dumps(capabilities or {})
-            conn.execute(text("""
-                INSERT INTO agents (id, name, capability_tags, status, address, metadata,
-                    load, current_tasks, registered_at, last_heartbeat,
-                    trigger_mode, poll_interval_seconds, model_name, updated_at)
-                VALUES (:aid, :name, :caps, :status, :addr, :meta,
-                    0, 0, :now, :hb, :tm, :poll, :model, :now)
-            """), {
-                "aid": agent_id,
-                "name": name,
-                "caps": cap_json,
-                "status": AgentStatus.ONLINE.value,
-                "addr": address or "",
-                "meta": json.dumps(metadata or {}),
-                "now": now,
-                "hb": hb,
-                "tm": tm,
-                "poll": poll_interval_seconds,
-                "model": model_name,
-            })
-        conn.commit()
+            new_agent = Agent(
+                id=agent_id,
+                name=name,
+                capability_tags=cap_json,
+                status=AgentStatus.ONLINE.value,
+                address=address or "",
+                meta_data=json.dumps(metadata or {}),
+                load=0,
+                current_tasks=0,
+                registered_at=now,
+                last_heartbeat=hb,
+                trigger_mode=tm,
+                poll_interval_seconds=poll_interval_seconds,
+                model_name=model_name,
+                updated_at=now,
+            )
+            conn.add(new_agent)
+            conn.commit()
 
         # 返回 AgentInfo（DB 已是最新的）
-        row = conn.execute(text(
-            "SELECT * FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
+        row = conn.query(Agent).filter(Agent.id == agent_id).first()
         return self._row_to_agent(row) if row else None
 
     def unregister(self, agent_id: str, reason: str = None) -> bool:
@@ -224,24 +231,27 @@ class AgentRegistry:
         """
         conn = self._db()
         now = datetime.now()
+
+        # Read current metadata, merge with unregister info
+        agent = conn.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            return False
+
         meta_update = {
             "unregister_reason": reason,
             "unregistered_at": now.isoformat(),
         }
-        conn.execute(text("""
-            UPDATE agents
-            SET status = :status,
-                metadata = json_patch(COALESCE(metadata, '{}'), :meta),
-                updated_at = :now
-            WHERE id = :aid
-        """), {
-            "aid": agent_id,
-            "status": AgentStatus.OFFLINE.value,
-            "meta": json.dumps(meta_update),
-            "now": now,
-        })
+        try:
+            existing_meta = json.loads(agent.meta_data) if agent.meta_data else {}
+        except (json.JSONDecodeError, TypeError):
+            existing_meta = {}
+        existing_meta.update(meta_update)
+
+        agent.status = AgentStatus.OFFLINE.value
+        agent.meta_data = json.dumps(existing_meta)
+        agent.updated_at = now
         conn.commit()
-        return conn.execute(text("SELECT changes()")).fetchone()[0] > 0
+        return True
 
     def heartbeat(self, agent_id: str, status: dict = None) -> bool:
         """
@@ -251,25 +261,19 @@ class AgentRegistry:
         now = datetime.now()
 
         # 检查 agent 是否存在
-        existing = conn.execute(text(
-            "SELECT id, status FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
-        if not existing:
+        agent = conn.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
             return False
 
         # 更新心跳和负载
-        updates = {
-            "last_heartbeat": now,
-            "status": AgentStatus.ONLINE.value,  # 心跳默认在线
-            "now": now,
-            "aid": agent_id,
-        }
+        agent.last_heartbeat = now
+        agent.status = AgentStatus.ONLINE.value  # 心跳默认在线
 
         if status:
             if "load" in status:
-                updates["load"] = int(status["load"])
+                agent.load = int(status["load"])
             if "current_tasks" in status:
-                updates["current_tasks"] = int(status["current_tasks"])
+                agent.current_tasks = int(status["current_tasks"])
             # _force_online: 心跳成功即在线，忽略 state 映射
             if "_force_online" not in status:
                 if "state" in status:
@@ -280,31 +284,23 @@ class AgentRegistry:
                         "idle": AgentStatus.IDLE.value,
                         "offline": AgentStatus.OFFLINE.value,
                     }
-                    updates["status"] = status_map.get(state, AgentStatus.IDLE.value)
+                    agent.status = status_map.get(state, AgentStatus.IDLE.value)
 
-        if "load" not in updates:
-            # 保留当前负载值
-            current = conn.execute(text(
-                "SELECT load FROM agents WHERE id = :aid"
-            ), {"aid": agent_id}).fetchone()
-            updates["load"] = current[0] if current else 0
+        if "load" not in (status or {}):
+            # 保留当前负载值（已在上面设置）
+            pass
 
-        if "current_tasks" not in updates:
-            current = conn.execute(text(
-                "SELECT current_tasks FROM agents WHERE id = :aid"
-            ), {"aid": agent_id}).fetchone()
-            updates["current_tasks"] = current[0] if current else 0
+        if "current_tasks" not in (status or {}):
+            # 保留当前值（已在上面设置或保持原值）
+            pass
 
         # Phase 1.1: 自动计算 load = min(100, current_tasks / max_concurrent_tasks * 100)
-        max_concurrent = conn.execute(text(
-            "SELECT max_concurrent_tasks FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
-        max_ct = max_concurrent[0] if max_concurrent else 5
-        if max_ct > 0 and "load" not in updates:
-            updates["load"] = min(100, int(updates["current_tasks"] / max_ct * 100))
+        max_ct = agent.max_concurrent_tasks or 5
+        if max_ct > 0 and (not status or "load" not in status):
+            agent.load = min(100, int(agent.current_tasks / max_ct * 100))
 
         # Phase 1.3: health_status 与 status 永远保持一致
-        updates["health_status"] = updates["status"]
+        agent.health_status = agent.status
 
         # Phase 1.6: 从心跳中提取 model_name 并更新
         model_name = None
@@ -313,24 +309,10 @@ class AgentRegistry:
         elif status and status.get("model"):
             model_name = status["model"]
 
-        # 构建 UPDATE 语句
-        set_clauses = [
-            "last_heartbeat = :last_heartbeat",
-            "status = :status",
-            "load = :load",
-            "current_tasks = :current_tasks",
-            "health_status = :health_status",
-            "updated_at = :now",
-        ]
         if model_name:
-            set_clauses.append("model_name = :model_name")
-            updates["model_name"] = model_name
+            agent.model_name = model_name
 
-        conn.execute(text(f"""
-            UPDATE agents
-            SET {', '.join(set_clauses)}
-            WHERE id = :aid
-        """), updates)
+        agent.updated_at = now
         conn.commit()
         return True
 
@@ -339,9 +321,7 @@ class AgentRegistry:
         获取 Agent 信息（从 DB 查询）
         """
         conn = self._db()
-        row = conn.execute(text(
-            "SELECT * FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
+        row = conn.query(Agent).filter(Agent.id == agent_id).first()
         return self._row_to_agent(row) if row else None
 
     def list_agents(self, status: AgentStatus = None) -> List[AgentInfo]:
@@ -352,14 +332,10 @@ class AgentRegistry:
         self.cleanup_dead_agents()
 
         conn = self._db()
+        query = conn.query(Agent).order_by(Agent.name)
         if status:
-            rows = conn.execute(text(
-                "SELECT * FROM agents WHERE status = :status ORDER BY name"
-            ), {"status": status.value}).fetchall()
-        else:
-            rows = conn.execute(text(
-                "SELECT * FROM agents ORDER BY name"
-            )).fetchall()
+            query = query.filter(Agent.status == status.value)
+        rows = query.all()
         return [self._row_to_agent(row) for row in rows]
 
     def update_status(self, agent_id: str, status: AgentStatus) -> AgentInfo:
@@ -367,13 +343,10 @@ class AgentRegistry:
         更新 Agent 状态
         """
         conn = self._db()
-        conn.execute(text("""
-            UPDATE agents SET status = :status, last_heartbeat = :now, updated_at = :now
-            WHERE id = :aid
-        """), {
-            "aid": agent_id,
+        conn.query(Agent).filter(Agent.id == agent_id).update({
             "status": status.value,
-            "now": datetime.now(),
+            "last_heartbeat": datetime.now(),
+            "updated_at": datetime.now(),
         })
         conn.commit()
         return self.get_agent(agent_id)
@@ -387,13 +360,9 @@ class AgentRegistry:
             "business": [], "professional": [],
             "technical": capabilities, "management": []
         })
-        conn.execute(text("""
-            UPDATE agents SET capability_tags = :caps, updated_at = :now
-            WHERE id = :aid
-        """), {
-            "aid": agent_id,
-            "caps": cap_json,
-            "now": datetime.now(),
+        conn.query(Agent).filter(Agent.id == agent_id).update({
+            "capability_tags": cap_json,
+            "updated_at": datetime.now(),
         })
         conn.commit()
         return self.get_agent(agent_id)
@@ -419,39 +388,35 @@ class AgentRegistry:
             new_status = AgentStatus.ONLINE
 
         updates = {
-            "aid": agent_id,
             "load": load,
             "status": new_status.value,
-            "now": datetime.now(),
+            "updated_at": datetime.now(),
         }
         if current_tasks is not None:
             updates["current_tasks"] = current_tasks
 
-        conn.execute(text("""
-            UPDATE agents
-            SET load = :load, status = :status, updated_at = :now
-            """ + (", current_tasks = :current_tasks" if current_tasks is not None else "") + """
-            WHERE id = :aid
-        """), updates)
+        conn.query(Agent).filter(Agent.id == agent_id).update(updates)
         conn.commit()
         return self.get_agent(agent_id)
 
     def increment_load(self, agent_id: str) -> Optional[AgentInfo]:
         """增加负载计数（任务派发时用）"""
         conn = self._db()
-        conn.execute(text("""
-            UPDATE agents SET load = MIN(100, load + 1), updated_at = :now WHERE id = :aid
-        """), {"aid": agent_id, "now": datetime.now()})
-        conn.commit()
+        agent = conn.query(Agent).filter(Agent.id == agent_id).first()
+        if agent:
+            agent.load = min(100, (agent.load or 0) + 1)
+            agent.updated_at = datetime.now()
+            conn.commit()
         return self.get_agent(agent_id)
 
     def decrement_load(self, agent_id: str) -> Optional[AgentInfo]:
         """减少负载计数（任务完成时用）"""
         conn = self._db()
-        conn.execute(text("""
-            UPDATE agents SET load = MAX(0, load - 1), updated_at = :now WHERE id = :aid
-        """), {"aid": agent_id, "now": datetime.now()})
-        conn.commit()
+        agent = conn.query(Agent).filter(Agent.id == agent_id).first()
+        if agent:
+            agent.load = max(0, (agent.load or 0) - 1)
+            agent.updated_at = datetime.now()
+            conn.commit()
         return self.get_agent(agent_id)
 
     def set_load(self, agent_id: str, load: int) -> Optional[AgentInfo]:
@@ -460,22 +425,24 @@ class AgentRegistry:
         if not agent:
             return None
         conn = self._db()
-        conn.execute(text("""
-            UPDATE agents SET load = :load, current_tasks = :load, updated_at = :now WHERE id = :aid
-        """), {"aid": agent_id, "load": max(0, min(100, load)), "now": datetime.now()})
+        conn.query(Agent).filter(Agent.id == agent_id).update({
+            "load": max(0, min(100, load)),
+            "current_tasks": max(0, min(100, load)),
+            "updated_at": datetime.now(),
+        })
         conn.commit()
         return self.get_agent(agent_id)
 
     def calculate_load(self, current_tasks: int, max_concurrent_tasks: int) -> int:
         """
         计算 Agent 负载百分比（Phase 1.1）
-        
+
         load = min(100, current_tasks / max_concurrent_tasks * 100)
-        
+
         Args:
             current_tasks: 当前任务数
             max_concurrent_tasks: 最大并发任务数
-            
+
         Returns:
             负载百分比 (0-100)
         """
@@ -486,43 +453,42 @@ class AgentRegistry:
     def update_load_withCalculation(self, agent_id: str, current_tasks: int = None, max_concurrent_tasks: int = None) -> Optional[AgentInfo]:
         """
         更新 Agent 负载（自动根据 current_tasks 和 max_concurrent_tasks 计算 load）
-        
+
         Phase 1.1: load = min(100, current_tasks / max_concurrent_tasks * 100)
-        
+
         Args:
             agent_id: Agent ID
             current_tasks: 当前任务数（可选，不传则从 DB 读取）
             max_concurrent_tasks: 最大并发任务数（可选，不传则从 DB 读取）
-            
+
         Returns:
             更新后的 AgentInfo
         """
         conn = self._db()
-        
+
         # 获取当前值（如果未传入）
         if current_tasks is None or max_concurrent_tasks is None:
-            row = conn.execute(text("SELECT current_tasks, max_concurrent_tasks FROM agents WHERE id = :aid"), {"aid": agent_id}).fetchone()
-            if not row:
+            agent = conn.query(Agent).with_entities(
+                Agent.current_tasks, Agent.max_concurrent_tasks
+            ).filter(Agent.id == agent_id).first()
+            if not agent:
                 return None
             if current_tasks is None:
-                current_tasks = row[0] if row[0] is not None else 0
+                current_tasks = agent[0] if agent[0] is not None else 0
             if max_concurrent_tasks is None:
-                max_concurrent_tasks = row[1] if row[1] is not None else 5
-        
+                max_concurrent_tasks = agent[1] if agent[1] is not None else 5
+
         # 计算负载
         load = self.calculate_load(current_tasks, max_concurrent_tasks)
-        
+
         # 更新数据库
-        conn.execute(text("""
-            UPDATE agents SET load = :load, current_tasks = :current_tasks, updated_at = :now WHERE id = :aid
-        """), {
-            "aid": agent_id,
+        conn.query(Agent).filter(Agent.id == agent_id).update({
             "load": load,
             "current_tasks": current_tasks,
-            "now": datetime.now(),
+            "updated_at": datetime.now(),
         })
         conn.commit()
-        
+
         return self.get_agent(agent_id)
 
     def is_alive(self, agent_id: str) -> bool:
@@ -537,11 +503,10 @@ class AgentRegistry:
         """获取已超时的 Agent"""
         conn = self._db()
         threshold = datetime.now() - timedelta(seconds=self.HEARTBEAT_TIMEOUT)
-        rows = conn.execute(text("""
-            SELECT * FROM agents
-            WHERE status IN ('online', 'busy', 'idle')
-              AND last_heartbeat < :threshold
-        """), {"threshold": threshold}).fetchall()
+        rows = conn.query(Agent).filter(
+            Agent.status.in_(['online', 'busy', 'idle']),
+            Agent.last_heartbeat < threshold,
+        ).all()
         return [self._row_to_agent(row) for row in rows]
 
     def cleanup_dead_agents(self) -> int:
@@ -550,14 +515,13 @@ class AgentRegistry:
         if not dead:
             return 0
         conn = self._db()
-        conn.execute(text("""
-            UPDATE agents SET status = :status, updated_at = :now
-            WHERE status IN ('online', 'busy', 'idle')
-              AND last_heartbeat < :threshold
-        """), {
+        threshold = datetime.now() - timedelta(seconds=self.HEARTBEAT_TIMEOUT)
+        conn.query(Agent).filter(
+            Agent.status.in_(['online', 'busy', 'idle']),
+            Agent.last_heartbeat < threshold,
+        ).update({
             "status": AgentStatus.OFFLINE.value,
-            "now": datetime.now(),
-            "threshold": datetime.now() - timedelta(seconds=self.HEARTBEAT_TIMEOUT),
+            "updated_at": datetime.now(),
         })
         conn.commit()
         return len(dead)
@@ -565,12 +529,10 @@ class AgentRegistry:
     def get_available_agents(self) -> List[AgentInfo]:
         """获取可用的 Agent（在线且负载未满）"""
         conn = self._db()
-        rows = conn.execute(text("""
-            SELECT * FROM agents
-            WHERE status IN ('online', 'idle')
-              AND load < 80
-            ORDER BY load ASC
-        """)).fetchall()
+        rows = conn.query(Agent).filter(
+            Agent.status.in_(['online', 'idle']),
+            Agent.load < 80,
+        ).order_by(Agent.load.asc()).all()
         return [self._row_to_agent(row) for row in rows]
 
     def get_agents_by_capabilities(self, capabilities: List[str], require_all: bool = True) -> List[AgentInfo]:
@@ -594,13 +556,7 @@ class AgentRegistry:
     def get_stats(self) -> dict:
         """获取注册统计"""
         conn = self._db()
-        rows = conn.execute(text("""
-            SELECT status, COUNT(*) as cnt,
-                   AVG(load) as avg_load,
-                   AVG(current_tasks) as avg_tasks
-            FROM agents
-            GROUP BY status
-        """)).fetchall()
+        rows = conn.query(Agent.status, func.count(Agent.id).label('cnt'), func.avg(Agent.load).label('avg_load'), func.avg(Agent.current_tasks).label('avg_tasks')).group_by(Agent.status).all()
 
         stats = {"total": 0, "online": 0, "busy": 0, "idle": 0, "offline": 0, "dead": 0, "avg_load": 0, "avg_current_tasks": 0}
         for row in rows:
@@ -614,9 +570,9 @@ class AgentRegistry:
         stats["dead"] = len(self.get_dead_agents())
 
         # 平均负载
-        all_agents = conn.execute(text(
-            "SELECT AVG(load), AVG(current_tasks) FROM agents WHERE status IN ('online', 'idle', 'busy')"
-        )).fetchone()
+        all_agents = conn.query(func.avg(Agent.load), func.avg(Agent.current_tasks)).filter(
+            Agent.status.in_(['online', 'idle', 'busy'])
+        ).first()
         if all_agents and all_agents[0] is not None:
             stats["avg_load"] = all_agents[0]
             stats["avg_current_tasks"] = all_agents[1]

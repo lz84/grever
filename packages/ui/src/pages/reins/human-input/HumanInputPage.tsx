@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
-import { HUMAN_INPUT } from '../../../shared/api/paths';
+import { humanInputApi } from '../../../shared/utils/api';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, Loader2, CheckCircle, XCircle, Clock,
@@ -480,9 +480,7 @@ export default function HumanInputPage() {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const r = await fetch(HUMAN_INPUT.LIST_PENDING);
-      if (!r.ok) throw new Error('Failed');
-      const data = await r.json();
+      const data = await humanInputApi.listPending();
       const list = Array.isArray(data) ? data : (data.requests || data.items || []);
       setInputs(list);
 

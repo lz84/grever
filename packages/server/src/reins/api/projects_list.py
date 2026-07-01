@@ -85,3 +85,32 @@ def debug_filter(
         "filtered_count": len(filtered),
         "projects": [p.to_dict() for p in filtered]
     }
+
+@router.get("/count")
+def project_count(
+    group_by: str = Query(default="goal", description="分组维度：goal"),
+    goal_id: Optional[str] = Query(default=None, description="按目标 ID 过滤，只统计单个 goal 的数量"),
+    db: Session = Depends(get_db)
+):
+    """统计项目数量。
+
+    - `?group_by=goal` → {goal_id: count}  按目标分组
+    - `?group_by=goal&goal_id=xxx` → int  单个目标的项目数
+    """
+    from sqlalchemy import func as sqla_func
+
+    if goal_id:
+        # 单个 goal 的项目数
+        count = db.query(sqla_func.count(Project.id)).filter(
+            Project.goal_id == goal_id
+        ).scalar()
+        return {"goal_id": goal_id, "count": count}
+
+    # 按 goal_id 分组统计
+    rows = db.query(
+        Project.goal_id,
+        sqla_func.count(Project.id).label('count')
+    ).filter(
+        Project.goal_id.isnot(None)
+    ).group_by(Project.goal_id).all()
+    return {row[0]: row[1] for row in rows}

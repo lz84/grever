@@ -24,8 +24,8 @@ from agent_service.adapters.base import (
 
 # ── Paths ──
 OPENCLAW_MJS = Path("C:/Users/liuzh/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs")
-NEXUS_DIR = Path(__file__).resolve().parents[5]
-NEXUS_LOGS_DIR = NEXUS_DIR / "logs"
+GREVER_DIR = Path(__file__).resolve().parents[5]
+GREVER_LOGS_DIR = GREVER_DIR / "logs"
 
 
 class OpenClawAdapter(BaseAgentAdapter):
@@ -91,7 +91,7 @@ class OpenClawAdapter(BaseAgentAdapter):
             result = subprocess.run(
                 ["node", str(OPENCLAW_MJS), "agent", "--list"],
                 capture_output=True, text=True, timeout=10,
-                cwd=str(NEXUS_DIR),
+                cwd=str(GREVER_DIR),
             )
             output = result.stdout + result.stderr
             # 简单检查 agent_code 是否在输出中
@@ -118,7 +118,7 @@ class OpenClawAdapter(BaseAgentAdapter):
             result = subprocess.run(
                 ["node", str(OPENCLAW_MJS), "gateway", "status"],
                 capture_output=True, text=True, timeout=15,
-                cwd=str(NEXUS_DIR),
+                cwd=str(GREVER_DIR),
             )
             alive = result.returncode == 0
             if alive:
@@ -147,13 +147,13 @@ class OpenClawAdapter(BaseAgentAdapter):
         """
         task_id = task.task_id
         agent_code = config.get("agent_code", "main")
-        session_id = f"nexus-{task_id}"
+        session_id = f"grever-{task_id}"
 
         # 构建 prompt
         prompt = self._build_prompt(task)
 
         # 确保 logs 目录存在
-        NEXUS_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        GREVER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
         # 构建命令
         cmd = [
@@ -178,7 +178,7 @@ class OpenClawAdapter(BaseAgentAdapter):
                 capture_output=True,
                 text=True,
                 timeout=task.timeout_seconds,
-                cwd=str(NEXUS_DIR),
+                cwd=str(GREVER_DIR),
             )
 
             output = result.stdout
@@ -234,7 +234,7 @@ class OpenClawAdapter(BaseAgentAdapter):
     async def get_result(self, dispatch_id: str,
                          config: Dict[str, Any]) -> Optional[TaskResult]:
         """OpenClaw 是同步模式，此方法从 result file 读取结果"""
-        result_file = NEXUS_LOGS_DIR / f"nexus_result_{dispatch_id.replace('-', '_')}.json"
+        result_file = GREVER_LOGS_DIR / f"nexus_result_{dispatch_id.replace('-', '_')}.json"
         if not result_file.exists():
             return None
 
@@ -304,8 +304,8 @@ class OpenClawAdapter(BaseAgentAdapter):
     def _write_result_file(task_id: str, output: str, exit_code: int,
                            success: bool, summary: str):
         """写入 result file"""
-        NEXUS_LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        result_file = NEXUS_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
+        GREVER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        result_file = GREVER_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
 
         result_data = {
             "task_id": task_id,

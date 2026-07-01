@@ -51,7 +51,7 @@ def test_cognitions_file():
             "content": "地震救援中发现主干道堵塞会影响医疗点设立",
             "tags": ["地震", "救援"],
             "confidence": 0.9,
-            "source": {"agent_id": "agent-rescue-01", "task_id": "task-006", "channel": "nexus"},
+            "source": {"agent_id": "agent-rescue-01", "task_id": "task-006", "channel": "grever"},
             "status": "published",
             "domain": "抢险救灾",
             "quality_score": 1.0,
@@ -65,7 +65,7 @@ def test_cognitions_file():
             "content": "危化品泄漏事故中，疏散范围应根据化学品类型和泄漏量动态调整",
             "tags": ["危化品", "疏散"],
             "confidence": 0.85,
-            "source": {"agent_id": "agent-hazmat-01", "task_id": "task-hz-003", "channel": "nexus"},
+            "source": {"agent_id": "agent-hazmat-01", "task_id": "task-hz-003", "channel": "grever"},
             "status": "published",
             "domain": "抢险救灾",
             "quality_score": 0.95,
@@ -107,7 +107,7 @@ class TestKnowledgeInjection:
             "source": {
                 "agent_id": "agent-rescue-01",
                 "task_id": "task-001",
-                "channel": "nexus"
+                "channel": "grever"
             },
             "tags": ["搜救", "生命探测", "经验"],
             "confidence": 0.88,
@@ -120,7 +120,7 @@ class TestKnowledgeInjection:
         assert "cognition" in data
         assert data["cognition"]["type"] == "lesson"
         assert data["cognition"]["source"]["agent_id"] == "agent-rescue-01"
-        assert data["cognition"]["source"]["channel"] == "nexus"
+        assert data["cognition"]["source"]["channel"] == "grever"
         logger.info("✓ POST /cognition - lesson type created successfully")
 
     def test_create_cognition_fact(self, client):
@@ -131,7 +131,7 @@ class TestKnowledgeInjection:
             "source": {
                 "agent_id": "agent-rescue-01",
                 "task_id": "task-001",
-                "channel": "nexus"
+                "channel": "grever"
             },
             "tags": ["地震", "黄金救援时间"],
             "confidence": 0.95,
@@ -152,7 +152,7 @@ class TestKnowledgeInjection:
             "source": {
                 "agent_id": "agent-coordinator-01",
                 "task_id": "task-coord-001",
-                "channel": "nexus"
+                "channel": "grever"
             },
             "tags": ["协同", "效率"],
             "confidence": 0.8,
@@ -168,7 +168,7 @@ class TestKnowledgeInjection:
         """注入 meta 类型认知"""
         response = client.post("/api/v1/grasp/cognition", json={
             "type": "meta",
-            "content": "知识注入API应在Sprint 6完成，作为Grasp和Nexus的桥梁",
+            "content": "知识注入API应在Sprint 6完成，作为Grasp和Grever的桥梁",
             "source": {
                 "agent_id": "system",
                 "task_id": "MAK-169",
@@ -185,14 +185,14 @@ class TestKnowledgeInjection:
         logger.info("✓ POST /cognition - meta type created successfully")
 
     def test_create_cognition_nexus_source(self, client):
-        """注入认知 - source 包含 Nexus 执行结果信息"""
+        """注入认知 - source 包含 Grever 执行结果信息"""
         response = client.post("/api/v1/grasp/cognition", json={
             "type": "lesson",
             "content": "执行task-006时发现主干道疏通是后续任务的依赖瓶颈",
             "source": {
                 "agent_id": "agent-infra-01",
                 "task_id": "task-006",
-                "channel": "nexus"
+                "channel": "grever"
             },
             "tags": ["基础设施", "依赖", "经验"],
             "confidence": 0.9,
@@ -205,9 +205,9 @@ class TestKnowledgeInjection:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["cognition"]["source"]["channel"] == "nexus"
+        assert data["cognition"]["source"]["channel"] == "grever"
         assert data["cognition"]["metadata"]["lessons_learned"] == True
-        logger.info("✓ POST /cognition - Nexus source with execution result")
+        logger.info("✓ POST /cognition - Grever source with execution result")
 
     def test_create_cognition_missing_content(self, client):
         """注入认知 - 缺少内容应返回 400"""
@@ -274,7 +274,7 @@ class TestKnowledgeInjection:
         response = client.post("/api/v1/grasp/cognition", json={
             "type": "lesson",
             "content": "地震救援中应先评估建筑结构再进行搜救",
-            "source": {"agent_id": "agent-rescue-01", "channel": "nexus"},
+            "source": {"agent_id": "agent-rescue-01", "channel": "grever"},
             "tags": ["地震", "搜救", "建筑评估", "优先级"],
             "confidence": 0.9
         })
@@ -289,7 +289,7 @@ class TestKnowledgeInjection:
         response = client.post("/api/v1/grasp/cognition", json={
             "type": "lesson",
             "content": "测试自动生成字段",
-            "source": {"agent_id": "test-agent", "task_id": "test-task", "channel": "nexus"},
+            "source": {"agent_id": "test-agent", "task_id": "test-task", "channel": "grever"},
             "confidence": 0.8
         })
         
@@ -483,15 +483,15 @@ class TestKnowledgeInjectionIntegration:
 
     def test_nexus_execution_result_to_knowledge(self, client):
         """
-        集成场景：Nexus 执行结果 → Grasp 知识库
+        集成场景：Grever 执行结果 → Grasp 知识库
         
         模拟场景：
-        1. Nexus 执行完一个救援任务
+        1. Grever 执行完一个救援任务
         2. 任务完成后自动生成经验认知
         3. 认知写入 Grasp 知识库
         4. 认知可被后续任务检索
         """
-        # 步骤1: 模拟 Nexus 执行结果写入认知
+        # 步骤1: 模拟 Grever 执行结果写入认知
         response = client.post("/api/v1/grasp/cognition", json={
             "type": "lesson",
             "content": "在城市地震救援中，主干道疏通（task-006）是所有后续任务的依赖，应作为最高优先级执行。疏通完成后，医疗点设立和避难所设置才能并行开展。",
@@ -499,7 +499,7 @@ class TestKnowledgeInjectionIntegration:
                 "agent_id": "agent-infra-01",
                 "task_id": "task-006",
                 "workflow_id": "wf-disaster-001",
-                "channel": "nexus",
+                "channel": "grever",
                 "execution_result": "completed",
                 "auto_generated": True
             },
@@ -516,7 +516,7 @@ class TestKnowledgeInjectionIntegration:
         assert response.status_code == 200
         data = response.json()
         cog = data["cognition"]
-        assert cog["source"]["channel"] == "nexus"
+        assert cog["source"]["channel"] == "grever"
         assert cog["source"]["task_id"] == "task-006"
         
         # 步骤2: 验证认知可通过知识库检索
@@ -528,4 +528,4 @@ class TestKnowledgeInjectionIntegration:
         assert len(matching) > 0
         assert matching[0]["source"]["task_id"] == "task-006"
         
-        logger.info("✓ Integration: Nexus execution result → Grasp knowledge base → retrieval")
+        logger.info("✓ Integration: Grever execution result → Grasp knowledge base → retrieval")

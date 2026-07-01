@@ -1,5 +1,5 @@
 """
-Nexus 统一异常定义
+Grever 统一异常定义
 包含基础异常类和错误码定义
 """
 
@@ -138,10 +138,10 @@ class ErrorCode(IntEnum):
     SERVICE_UNAVAILABLE = 9004  # 服务不可用
 
 
-class NexusException(Exception):
+class GreverException(Exception):
     """
-    Nexus 基础异常类
-    所有 Nexus 异常都继承自此类
+    Grever 基础异常类
+    所有 Grever 异常都继承自此类
     """
     
     def __init__(
@@ -203,7 +203,7 @@ class NexusException(Exception):
             return 500  # Internal Server Error
 
 
-class BusinessException(NexusException):
+class BusinessException(GreverException):
     """业务异常 - 业务逻辑错误"""
     
     def __init__(
@@ -215,7 +215,7 @@ class BusinessException(NexusException):
         super().__init__(code=code, message=message, details=details)
 
 
-class ValidationException(NexusException):
+class ValidationException(GreverException):
     """参数验证异常"""
     
     def __init__(
@@ -237,7 +237,7 @@ class ValidationException(NexusException):
         )
 
 
-class AuthenticationException(NexusException):
+class AuthenticationException(GreverException):
     """认证异常"""
     
     def __init__(
@@ -248,7 +248,7 @@ class AuthenticationException(NexusException):
         super().__init__(code=code, message=message)
 
 
-class AuthorizationException(NexusException):
+class AuthorizationException(GreverException):
     """授权异常"""
     
     def __init__(
@@ -259,7 +259,7 @@ class AuthorizationException(NexusException):
         super().__init__(code=code, message=message)
 
 
-class NotFoundException(NexusException):
+class NotFoundException(GreverException):
     """资源未找到异常"""
     
     def __init__(
@@ -281,7 +281,7 @@ class NotFoundException(NexusException):
         )
 
 
-class RateLimitException(NexusException):
+class RateLimitException(GreverException):
     """速率限制异常"""
     
     def __init__(
@@ -300,7 +300,7 @@ class RateLimitException(NexusException):
         )
 
 
-class DatabaseException(NexusException):
+class DatabaseException(GreverException):
     """数据库异常"""
     
     def __init__(

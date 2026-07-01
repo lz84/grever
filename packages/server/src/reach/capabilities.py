@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 from fastapi import APIRouter, Query
-from sqlalchemy import text
+from sqlalchemy import Table, MetaData
 from persistence.database import DatabaseManager
 from persistence.base import DatabaseConfig
 
@@ -32,19 +32,17 @@ async def list_capabilities(
     db = DatabaseManager(config)
 
     try:
+        meta = MetaData()
+        caps_tbl = Table("capabilities", meta, autoload_with=db.engine)
         with db.engine.connect() as conn:
-            query = 'SELECT * FROM capabilities WHERE 1=1'
-            params = {}
+            stmt = caps_tbl.select()
             if category:
-                query += ' AND category = :category'
-                params['category'] = category
+                stmt = stmt.where(caps_tbl.c.category == category)
             if status:
-                query += ' AND status = :status'
-                params['status'] = status
-            query += ' ORDER BY usage_count DESC LIMIT :limit'
-            params['limit'] = limit
+                stmt = stmt.where(caps_tbl.c.status == status)
+            stmt = stmt.order_by(caps_tbl.c.usage_count.desc()).limit(limit)
 
-            result = conn.execute(text(query), params)
+            result = conn.execute(stmt)
             capabilities = []
             for row in result.fetchall():
                 row_dict = dict(row._mapping)
@@ -66,11 +64,16 @@ async def seed_capabilities():
     db = DatabaseManager(config)
 
     try:
+        meta = MetaData()
+        caps_tbl = Table("capabilities", meta, autoload_with=db.engine)
+        agents_tbl = Table("agents", meta, autoload_with=db.engine)
+
         with db.engine.connect() as conn:
-            agents_result = conn.execute(text('SELECT id, name, capability_tags FROM agents'))
+            agents_result = conn.execute(agents_tbl.select())
+            rows = agents_result.fetchall()
             capability_stats = {}
 
-            for row in agents_result.fetchall():
+            for row in rows:
                 row_dict = dict(row._mapping)
                 agent_id = row_dict['id']
                 caps = []
@@ -95,34 +98,31 @@ async def seed_capabilities():
                     if agent_id not in capability_stats[cap_name]['agents']:
                         capability_stats[cap_name]['agents'].append(agent_id)
 
-            now = datetime.now().isoformat()
+            now = datetime.now()
             for cap_name, stats in capability_stats.items():
                 category = _categorize(cap_name)
                 agents_json = json.dumps(stats['agents'], ensure_ascii=False)
 
-                # 先删除旧的（如果存在），再插入
-                conn.execute(text('DELETE FROM capabilities WHERE name = :name'), {'name': cap_name})
+                # 先删除旧记录再插入（避免 unique 冲突）
+                from sqlalchemy import delete
+                conn.execute(delete(caps_tbl).where(caps_tbl.c.name == cap_name))
                 conn.execute(
-                    text("""
-                        INSERT INTO capabilities (id, name, category, description, status, agents, usage_count, last_used, created_at, updated_at)
-                        VALUES (:id, :name, :category, :description, :status, :agents, :usage_count, :last_used, :created_at, :updated_at)
-                    """),
-                    {
-                        'id': str(uuid.uuid4()),
-                        'name': cap_name,
-                        'category': category,
-                        'description': f'Agent 能力：{cap_name}',
-                        'status': 'active',
-                        'agents': agents_json,
-                        'usage_count': stats['count'],
-                        'last_used': now,
-                        'created_at': now,
-                        'updated_at': now,
-                    }
+                    caps_tbl.insert().values(
+                        id=str(uuid.uuid4()),
+                        name=cap_name,
+                        category=category,
+                        description=f'Agent 能力：{cap_name}',
+                        status='active',
+                        agents=agents_json,
+                        usage_count=stats['count'],
+                        last_used=now,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
             conn.commit()
 
-            return {"message": f"Seeded {len(capability_stats)} capabilities"}
+        return {"message": f"Seeded {len(capability_stats)} capabilities"}
     finally:
         db.close()
 

@@ -7,10 +7,11 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
+from sqlalchemy import func, distinct
 from sqlalchemy.orm import Session
 
 from reins.common.database import get_db
+from models.system_config import SystemConfig
 
 from .settings_models import ConfigValueUpdate, BatchUpdateRequest, TestConnectionResponse
 from .settings_logic import _parse_value, _get_config_value, _get_category_configs, _get_gateway_config
@@ -20,9 +21,7 @@ router = APIRouter()
 @router.get("/")
 async def get_all_settings(db: Session = Depends(get_db)):
     """获取所有配置（按 category 分组）"""
-    results = db.execute(
-        text("SELECT DISTINCT category FROM system_config ORDER BY category")
-    ).fetchall()
+    results = db.query(distinct(SystemConfig.category)).order_by(SystemConfig.category).all()
     categories = [row[0] for row in results]
     all_settings = {}
     for cat in categories:
@@ -123,10 +122,7 @@ async def get_settings_by_category(category: str, db: Session = Depends(get_db))
     """获取某类配置"""
     configs = _get_category_configs(db, category)
     if not configs:
-        count = db.execute(
-            text("SELECT COUNT(*) FROM system_config WHERE category = :cat"),
-            {"cat": category}
-        ).scalar()
+        count = db.query(func.count(SystemConfig.id)).filter(SystemConfig.category == category).scalar()
         if count == 0:
             raise HTTPException(status_code=404, detail=f"Category '{category}' not found")
     return configs
@@ -134,7 +130,7 @@ async def get_settings_by_category(category: str, db: Session = Depends(get_db))
 @router.put("/{category}/batch")
 async def batch_update_settings(category: str, body: BatchUpdateRequest, db: Session = Depends(get_db)):
     """批量更新配置"""
-    now = datetime.utcnow().isoformat()
+    now = datetime.utcnow()
     updated = []
     errors = []
     for key, value in body.configs.items():
@@ -150,10 +146,9 @@ async def batch_update_settings(category: str, body: BatchUpdateRequest, db: Ses
             value_str = '""'
         else:
             value_str = json.dumps(str(value))
-        db.execute(
-            text("UPDATE system_config SET value = :val, updated_at = :updated_at, updated_by = :updated_by WHERE category = :cat AND key = :key"),
-            {"val": value_str, "updated_at": now, "updated_by": "admin", "cat": category, "key": key}
-        )
+        db.query(SystemConfig).filter(
+            SystemConfig.category == category, SystemConfig.key == key
+        ).update({"value": value_str, "updated_at": now, "updated_by": "admin"})
         updated.append(key)
     db.commit()
     return {"status": "ok", "updated": updated, "errors": errors, "count": len(updated)}
@@ -176,14 +171,13 @@ async def update_setting(category: str, key: str, body: ConfigValueUpdate, db: S
     existing = _get_config_value(db, category, key)
     if not existing:
         raise HTTPException(status_code=404, detail=f"Config '{category}/{key}' not found")
-    now = datetime.utcnow().isoformat()
-    db.execute(
-        text("UPDATE system_config SET value = :val, updated_at = :updated_at, updated_by = :updated_by WHERE category = :cat AND key = :key"),
-        {"val": body.value, "updated_at": now, "updated_by": "admin", "cat": category, "key": key}
-    )
+    now = datetime.utcnow()
+    db.query(SystemConfig).filter(
+        SystemConfig.category == category, SystemConfig.key == key
+    ).update({"value": body.value, "updated_at": now, "updated_by": "admin"})
     db.commit()
     logger.info(f"Config updated: {category}/{key} = {body.value}")
     return {
         "status": "ok", "category": category, "key": key,
-        "value": _parse_value(body.value), "updated_at": now,
+        "value": _parse_value(body.value), "updated_at": now.isoformat(),
     }

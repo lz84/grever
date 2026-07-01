@@ -2,7 +2,8 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
+from models import Task, Project, HumanInputRequest
 
 from reins.common.database import get_db
 from .human_review_logic import _to_iso
@@ -18,71 +19,51 @@ def _priority_str(p) -> Optional[str]:
         return p
     return _PRIORITY_MAP.get(int(p), "medium")
 
+def _task_to_pending_item(task, item_type: str) -> PendingItem:
+    return PendingItem(
+        id=task.id, type=item_type, title=task.title or f"{item_type} Task {task.id}",
+        description=task.description, status=task.status, priority=_priority_str(task.priority),
+        created_at=_to_iso(task.created_at), updated_at=_to_iso(task.updated_at) or None,
+        task_id=task.id, goal_id=task.goal_id, project_id=task.project_id,
+        verification_cycle=task.verification_cycle, metadata={"task_type": item_type}
+    )
+
 router = APIRouter()
 
 @router.get("/stats", response_model=HumanReviewStats)
 def get_human_review_stats(db: Session = Depends(get_db)):
     """获取人类审核统计信息"""
     try:
-        disputed_result = db.execute(text("SELECT COUNT(*) FROM tasks WHERE status = 'disputed'")).fetchone()
-        disputed_count = disputed_result[0] if disputed_result else 0
-
-        waiting_human_result = db.execute(text("SELECT COUNT(*) FROM tasks WHERE status = 'waiting_human'")).fetchone()
-        waiting_human_count = waiting_human_result[0] if waiting_human_result else 0
-
-        pending_result = db.execute(text("SELECT COUNT(*) FROM human_input_requests WHERE status = 'pending'")).fetchone()
-        pending_count = pending_result[0] if pending_result else 0
-
+        disputed_count = db.query(func.count(Task.id)).filter(Task.status == 'disputed').scalar() or 0
+        waiting_human_count = db.query(func.count(Task.id)).filter(Task.status == 'waiting_human').scalar() or 0
+        pending_count = db.query(func.count(HumanInputRequest.id)).filter(
+            HumanInputRequest.status == 'pending'
+        ).scalar() or 0
         total = disputed_count + waiting_human_count + pending_count
 
         recent_items: list = []
-        disputed_tasks = db.execute(text("""
-            SELECT t.id, t.title, t.description, t.status, t.priority, p.goal_id,
-                   t.project_id, t.verification_cycle, t.created_at, t.updated_at
-            FROM tasks t LEFT JOIN projects p ON t.project_id = p.id
-            WHERE t.status = 'disputed'
-            ORDER BY t.created_at DESC LIMIT 5
-        """)).fetchall()
-
+        disputed_tasks = db.query(Task).filter(Task.status == 'disputed').order_by(
+            Task.created_at.desc()
+        ).limit(5).all()
         for task in disputed_tasks:
-            recent_items.append({
-                "id": task.id, "type": "disputed", "title": task.title or f"Disputed Task {task.id}",
-                "description": task.description, "status": task.status, "priority": _priority_str(task.priority),
-                "created_at": _to_iso(task.created_at), "updated_at": _to_iso(task.updated_at) or None,
-                "task_id": task.id, "goal_id": task.goal_id, "project_id": task.project_id,
-                "verification_cycle": task.verification_cycle, "metadata": {"task_type": "disputed_task"}
-            })
+            recent_items.append(_task_to_pending_item(task, "disputed"))
 
-        waiting_tasks = db.execute(text("""
-            SELECT t.id, t.title, t.description, t.status, t.priority, p.goal_id,
-                   t.project_id, t.verification_cycle, t.created_at, t.updated_at
-            FROM tasks t LEFT JOIN projects p ON t.project_id = p.id
-            WHERE t.status = 'waiting_human'
-            ORDER BY t.created_at DESC LIMIT 5
-        """)).fetchall()
-
+        waiting_tasks = db.query(Task).filter(Task.status == 'waiting_human').order_by(
+            Task.created_at.desc()
+        ).limit(5).all()
         for task in waiting_tasks:
-            recent_items.append({
-                "id": task.id, "type": "waiting_human", "title": task.title or f"Waiting Human Task {task.id}",
-                "description": task.description, "status": task.status, "priority": _priority_str(task.priority),
-                "created_at": _to_iso(task.created_at), "updated_at": _to_iso(task.updated_at) or None,
-                "task_id": task.id, "goal_id": task.goal_id, "project_id": task.project_id,
-                "verification_cycle": task.verification_cycle, "metadata": {"task_type": "waiting_human_task"}
-            })
+            recent_items.append(_task_to_pending_item(task, "waiting_human"))
 
-        pending_requests = db.execute(text("""
-            SELECT id, task_id, title, description, input_type, status, created_at, updated_at
-            FROM human_input_requests WHERE status = 'pending'
-            ORDER BY created_at DESC LIMIT 5
-        """)).fetchall()
-
+        pending_requests = db.query(HumanInputRequest).filter(
+            HumanInputRequest.status == 'pending'
+        ).order_by(HumanInputRequest.created_at.desc()).limit(5).all()
         for req in pending_requests:
-            recent_items.append({
-                "id": req.id, "type": "pending_assist", "title": req.title or f"Human Input Request {req.id}",
-                "description": req.description, "status": req.status, "input_type": req.input_type,
-                "created_at": _to_iso(req.created_at), "updated_at": _to_iso(req.updated_at) or None,
-                "task_id": req.task_id, "metadata": {"request_type": "human_input_request"}
-            })
+            recent_items.append(PendingItem(
+                id=req.id, type="pending_assist", title=req.title or f"Human Input Request {req.id}",
+                description=req.description, status=req.status, input_type=req.input_type,
+                created_at=_to_iso(req.created_at), updated_at=_to_iso(req.updated_at) or None,
+                task_id=req.task_id, metadata={"request_type": "human_input_request"}
+            ))
 
         recent_items.sort(key=lambda x: x["created_at"], reverse=True)
         recent_items = recent_items[:5]

@@ -1,5 +1,5 @@
 """
-Nexus API Authentication Module
+Grever API Authentication Module
 提供 Bearer Token 认证系统
 """
 

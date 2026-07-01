@@ -16,7 +16,7 @@ from reins.common.database import DB_PATH
 
 from sqlalchemy import (
     create_engine,
-    text,
+    func,
 )
 from sqlalchemy.engine import Engine
 
@@ -78,19 +78,15 @@ class EventStore:
 
         with self.engine.begin() as conn:
             conn.execute(
-                text("""
-                    INSERT INTO events (event_id, agent_id, event_type, payload, created_at, read_at, workflow_id)
-                    VALUES (:event_id, :agent_id, :event_type, :payload, :created_at, :read_at, :workflow_id)
-                """),
-                {
-                    "event_id": event.event_id,
-                    "agent_id": event.agent_id,
-                    "event_type": event.event_type,
-                    "payload": json.dumps(payload, ensure_ascii=False),
-                    "created_at": event.created_at.isoformat() if event.created_at else datetime.now().isoformat(),
-                    "read_at": event.read_at.isoformat() if event.read_at else None,
-                    "workflow_id": event.payload.workflow_id if event.payload else None,
-                },
+                self._table.insert().values(
+                    event_id=event.event_id,
+                    agent_id=event.agent_id,
+                    event_type=event.event_type,
+                    payload=json.dumps(payload, ensure_ascii=False),
+                    created_at=event.created_at.isoformat() if event.created_at else datetime.now().isoformat(),
+                    read_at=event.read_at.isoformat() if event.read_at else None,
+                    workflow_id=event.payload.workflow_id if event.payload else None,
+                ),
             )
 
         logger.debug(f"[EventStore] Saved event {event.event_id} of type {event.event_type}")
@@ -102,8 +98,7 @@ class EventStore:
 
         with self.engine.begin() as conn:
             row = conn.execute(
-                text("SELECT * FROM events WHERE event_id = :event_id"),
-                {"event_id": event_id},
+                self._table.select().where(self._table.c.event_id == event_id),
             ).fetchone()
 
         if not row:
@@ -131,28 +126,23 @@ class EventStore:
         """
         self.ensure_table()
 
-        conditions = ["agent_id = :agent_id"]
-        params: dict = {"agent_id": agent_id, "limit": limit}
+        conditions = [self._table.c.agent_id == agent_id]
 
         if since:
-            conditions.append("created_at > :since")
-            params["since"] = since
+            conditions.append(self._table.c.created_at > since)
 
         if event_types:
-            placeholders = ", ".join([f":type_{i}" for i in range(len(event_types))])
-            conditions.append(f"event_type IN ({placeholders})")
-            for i, t in enumerate(event_types):
-                params[f"type_{i}"] = t
+            conditions.append(self._table.c.event_type.in_(event_types))
 
-        sql = f"""
-            SELECT * FROM events
-            WHERE {' AND '.join(conditions)}
-            ORDER BY created_at ASC
-            LIMIT :limit
-        """
+        stmt = (
+            self._table.select()
+            .where(*conditions)
+            .order_by(self._table.c.created_at.asc())
+            .limit(limit)
+        )
 
         with self.engine.begin() as conn:
-            rows = conn.execute(text(sql), params).fetchall()
+            rows = conn.execute(stmt).fetchall()
 
         events = []
         for row in rows:
@@ -175,18 +165,13 @@ class EventStore:
 
         self.ensure_table()
         now = datetime.now().isoformat()
-        placeholders = ", ".join([f":id_{i}" for i in range(len(event_ids))])
-        params = {f"id_{i}": eid for i, eid in enumerate(event_ids)}
-        params["now"] = now
 
         with self.engine.begin() as conn:
             result = conn.execute(
-                text(f"""
-                    UPDATE events
-                    SET read_at = :now
-                    WHERE event_id IN ({placeholders}) AND read_at IS NULL
-                """),
-                params,
+                self._table.update()
+                .where(self._table.c.event_id.in_(event_ids))
+                .where(self._table.c.read_at.is_(None))
+                .values(read_at=now),
             )
 
         logger.debug(f"[EventStore] Marked {result.rowcount} events as read")
@@ -200,21 +185,17 @@ class EventStore:
         """获取 Agent 的事件总数"""
         self.ensure_table()
 
-        conditions = ["agent_id = :agent_id"]
-        params: dict = {"agent_id": agent_id}
+        conditions = [self._table.c.agent_id == agent_id]
 
         if event_types:
-            placeholders = ", ".join([f":type_{i}" for i in range(len(event_types))])
-            conditions.append(f"event_type IN ({placeholders})")
-            for i, t in enumerate(event_types):
-                params[f"type_{i}"] = t
+            conditions.append(self._table.c.event_type.in_(event_types))
 
-        sql = f"SELECT COUNT(*) as cnt FROM events WHERE {' AND '.join(conditions)}"
+        stmt = self._table.select().with_only_columns([func.count()]).where(*conditions)
 
         with self.engine.begin() as conn:
-            row = conn.execute(text(sql), params).fetchone()
+            row = conn.execute(stmt).fetchone()
 
-        return row["cnt"] if row else 0
+        return row[0] if row else 0
 
     def _row_to_event(self, row: dict) -> Optional[Event]:
         """将数据库行转换为 Event 对象"""

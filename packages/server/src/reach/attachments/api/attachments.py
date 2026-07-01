@@ -14,8 +14,9 @@ from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Response, Body
 from fastapi.responses import FileResponse
-from sqlalchemy import text
+from sqlalchemy import func, inspect, text as sql_text
 
+from models import Attachment, AttachmentLink
 from reins.common.database import get_db_session
 
 router = APIRouter(prefix="/attachments", tags=["attachments"])
@@ -35,6 +36,28 @@ BLOCKED_EXTENSIONS = {
 # 合法的 entity_type
 VALID_ENTITY_TYPES = {"goal", "project", "task", "scenario", "step", "agent"}
 
+# Entity type to ORM model mapping for existence checks
+_ENTITY_MODEL_MAP = {
+    "goal": None,  # will import lazily
+    "project": None,
+    "task": None,
+}
+
+
+def _get_entity_model(entity_type: str):
+    """Lazy-import ORM models for entity existence checks."""
+    if entity_type == "goal":
+        from models import Goal
+        return Goal
+    elif entity_type == "project":
+        from models import Project
+        return Project
+    elif entity_type == "task":
+        from models import Task
+        return Task
+    return None
+
+
 def _safe_filename(filename: str) -> str:
     filename = filename.replace("/", "_").replace("\\", "_").replace("..", "")
     for char in '<>:"|?*':
@@ -44,6 +67,7 @@ def _safe_filename(filename: str) -> str:
         filename = name[:200 - len(ext)] + ext
     return filename
 
+
 def _storage_path(attachment_id: str, filename: str) -> str:
     now = datetime.now()
     subdir = f"{now.strftime('%Y')}/{now.strftime('%m')}"
@@ -52,18 +76,26 @@ def _storage_path(attachment_id: str, filename: str) -> str:
         root = os.path.abspath(root)
     return os.path.join(root, subdir, f"{attachment_id}_{_safe_filename(filename)}")
 
+
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
+
 def _check_entity_exists(entity_type: str, entity_id: str, db) -> bool:
+    """Check if an entity exists using ORM model."""
+    model = _get_entity_model(entity_type)
+    if model:
+        return db.query(model).filter(model.id == entity_id).first() is not None
+    # Fallback for entities without ORM models (scenario, step, agent)
     table_name = f"{entity_type}s"
     try:
-        row = db.execute(text(
+        row = db.execute(sql_text(
             f"SELECT 1 FROM {table_name} WHERE id = :eid LIMIT 1"
         ), {"eid": entity_id}).fetchone()
         return row is not None
     except Exception:
         return False
+
 
 @router.post("/upload")
 async def upload_attachment(
@@ -92,14 +124,12 @@ async def upload_attachment(
         file_hash = _sha256(content)
 
         # 去重检查
-        existing = db.execute(text(
-            "SELECT id, filename, file_path, mime_type, file_size FROM attachments WHERE sha256_hash = :h"
-        ), {"h": file_hash}).fetchone()
+        existing = db.query(Attachment).filter(Attachment.sha256_hash == file_hash).first()
 
         if existing:
-            attachment_id = existing[0]
+            attachment_id = existing.id
             reused = True
-            mime_type = existing[3]
+            mime_type = existing.mime_type
         else:
             attachment_id = f"att-{uuid.uuid4().hex[:8]}"
             file_path = _storage_path(attachment_id, file.filename)
@@ -108,25 +138,29 @@ async def upload_attachment(
                 f.write(content)
 
             mime_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
-            db.execute(text("""
-                INSERT INTO attachments (id, filename, file_path, mime_type, sha256_hash, file_size, created_by, created_at)
-                VALUES (:id, :fn, :fp, :mt, :h, :sz, :cb, :ca)
-            """), {
-                "id": attachment_id, "fn": file.filename, "fp": file_path,
-                "mt": mime_type, "h": file_hash, "sz": len(content),
-                "cb": created_by, "ca": datetime.now().isoformat(),
-            })
+            new_attachment = Attachment(
+                id=attachment_id,
+                filename=file.filename,
+                file_path=file_path,
+                mime_type=mime_type,
+                sha256_hash=file_hash,
+                file_size=len(content),
+                created_by=created_by,
+                created_at=datetime.now(),
+            )
+            db.add(new_attachment)
             reused = False
 
         # 创建 link
-        db.execute(text("""
-            INSERT INTO attachment_links (id, attachment_id, entity_type, entity_id, created_by, created_at)
-            VALUES (:id, :aid, :et, :eid, :cb, :ca)
-        """), {
-            "id": f"link-{uuid.uuid4().hex[:8]}", "aid": attachment_id,
-            "et": entity_type, "eid": entity_id, "cb": created_by,
-            "ca": datetime.now().isoformat(),
-        })
+        link = AttachmentLink(
+            id=f"link-{uuid.uuid4().hex[:8]}",
+            attachment_id=attachment_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            created_by=created_by,
+            created_at=datetime.now(),
+        )
+        db.add(link)
         db.commit()
 
         return {
@@ -136,14 +170,15 @@ async def upload_attachment(
     finally:
         db.close()
 
+
 @router.get("/{id}/download")
 async def download_attachment(id: str, download: bool = Query(False)):
     """下载附件"""
     db = get_db_session()
     try:
-        att = db.execute(text(
-            "SELECT filename, file_path, mime_type FROM attachments WHERE id = :id"
-        ), {"id": id}).fetchone()
+        att = db.query(Attachment).with_entities(
+            Attachment.filename, Attachment.file_path, Attachment.mime_type
+        ).filter(Attachment.id == id).first()
 
         if not att:
             raise HTTPException(404, "附件不存在")
@@ -158,21 +193,22 @@ async def download_attachment(id: str, download: bool = Query(False)):
     finally:
         db.close()
 
+
 @router.delete("/{id}")
 async def delete_attachment(id: str, force: bool = Query(False)):
     """删除附件"""
     db = get_db_session()
     try:
-        att = db.execute(text(
-            "SELECT file_path FROM attachments WHERE id = :id"
-        ), {"id": id}).fetchone()
+        att = db.query(Attachment).with_entities(
+            Attachment.file_path
+        ).filter(Attachment.id == id).first()
 
         if not att:
             raise HTTPException(404, "附件不存在")
 
-        link_count = db.execute(text(
-            "SELECT COUNT(*) FROM attachment_links WHERE attachment_id = :id"
-        ), {"id": id}).fetchone()[0]
+        link_count = db.query(func.count(AttachmentLink.id)).filter(
+            AttachmentLink.attachment_id == id
+        ).scalar()
 
         if link_count > 0 and not force:
             raise HTTPException(409, {
@@ -181,21 +217,22 @@ async def delete_attachment(id: str, force: bool = Query(False)):
                 "hint": "使用 ?force=true 强制删除"
             })
 
-        db.execute(text("DELETE FROM attachment_links WHERE attachment_id = :id"), {"id": id})
+        db.query(AttachmentLink).filter(AttachmentLink.attachment_id == id).delete()
         if os.path.exists(att[0]):
             os.remove(att[0])
-        db.execute(text("DELETE FROM attachments WHERE id = :id"), {"id": id})
+        db.query(Attachment).filter(Attachment.id == id).delete()
         db.commit()
         return {"success": True}
     finally:
         db.close()
+
 
 @router.post("/{id}/link")
 async def link_attachment(id: str, link_data: dict = Body(...)):
     """关联附件到实体"""
     db = get_db_session()
     try:
-        if not db.execute(text("SELECT 1 FROM attachments WHERE id = :id"), {"id": id}).fetchone():
+        if not db.query(Attachment).filter(Attachment.id == id).first():
             raise HTTPException(404, "附件不存在")
 
         entity_type = link_data.get("entity_type")
@@ -208,42 +245,48 @@ async def link_attachment(id: str, link_data: dict = Body(...)):
         if not _check_entity_exists(entity_type, entity_id, db):
             raise HTTPException(404, {"code": "ENTITY_NOT_FOUND", "message": f"实体不存在"})
 
-        if db.execute(text(
-            "SELECT 1 FROM attachment_links WHERE attachment_id = :aid AND entity_type = :et AND entity_id = :eid"
-        ), {"aid": id, "et": entity_type, "eid": entity_id}).fetchone():
+        if db.query(AttachmentLink).filter(
+            AttachmentLink.attachment_id == id,
+            AttachmentLink.entity_type == entity_type,
+            AttachmentLink.entity_id == entity_id,
+        ).first():
             return {"success": True, "message": "已关联"}
 
-        db.execute(text("""
-            INSERT INTO attachment_links (id, attachment_id, entity_type, entity_id, created_by, created_at)
-            VALUES (:id, :aid, :et, :eid, :cb, :ca)
-        """), {
-            "id": f"link-{uuid.uuid4().hex[:8]}", "aid": id,
-            "et": entity_type, "eid": entity_id, "cb": None,
-            "ca": datetime.now().isoformat(),
-        })
+        db.add(AttachmentLink(
+            id=f"link-{uuid.uuid4().hex[:8]}",
+            attachment_id=id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            created_by=None,
+            created_at=datetime.now(),
+        ))
         db.commit()
         return {"success": True, "link_id": id}
     finally:
         db.close()
+
 
 @router.delete("/{id}/link/{entity_type}/{entity_id}")
 async def unlink_attachment(id: str, entity_type: str, entity_id: str):
     """取消关联"""
     db = get_db_session()
     try:
-        if not db.execute(text("SELECT 1 FROM attachments WHERE id = :id"), {"id": id}).fetchone():
+        if not db.query(Attachment).filter(Attachment.id == id).first():
             raise HTTPException(404, "附件不存在")
 
-        result = db.execute(text(
-            "DELETE FROM attachment_links WHERE attachment_id = :aid AND entity_type = :et AND entity_id = :eid"
-        ), {"aid": id, "et": entity_type, "eid": entity_id})
+        result = db.query(AttachmentLink).filter(
+            AttachmentLink.attachment_id == id,
+            AttachmentLink.entity_type == entity_type,
+            AttachmentLink.entity_id == entity_id,
+        ).delete()
         db.commit()
 
-        if result.rowcount == 0:
+        if result == 0:
             return {"success": False, "message": "未找到关联"}
         return {"success": True}
     finally:
         db.close()
+
 
 @router.get("")
 async def list_attachments(entity_type: str = Query(...), entity_id: str = Query(...)):
@@ -253,13 +296,18 @@ async def list_attachments(entity_type: str = Query(...), entity_id: str = Query
         if entity_type not in VALID_ENTITY_TYPES:
             raise HTTPException(400, {"code": "INVALID_ENTITY", "message": f"不支持的实体类型: {entity_type}"})
 
-        rows = db.execute(text("""
-            SELECT a.id, a.filename, a.mime_type, a.file_size, a.sha256_hash, a.created_at, a.created_by
-            FROM attachments a
-            JOIN attachment_links l ON a.id = l.attachment_id
-            WHERE l.entity_type = :et AND l.entity_id = :eid
-            ORDER BY a.created_at DESC
-        """), {"et": entity_type, "eid": entity_id}).fetchall()
+        rows = db.query(
+            Attachment.id, Attachment.filename, Attachment.mime_type,
+            Attachment.file_size, Attachment.sha256_hash,
+            Attachment.created_at, Attachment.created_by,
+        ).join(
+            AttachmentLink, Attachment.id == AttachmentLink.attachment_id
+        ).filter(
+            AttachmentLink.entity_type == entity_type,
+            AttachmentLink.entity_id == entity_id,
+        ).order_by(
+            Attachment.created_at.desc()
+        ).all()
 
         return {
             "attachments": [{
@@ -272,14 +320,17 @@ async def list_attachments(entity_type: str = Query(...), entity_id: str = Query
     finally:
         db.close()
 
+
 @router.head("/{id}")
 async def get_attachment_metadata(id: str):
     """获取附件元信息"""
     db = get_db_session()
     try:
-        att = db.execute(text(
-            "SELECT filename, file_path, mime_type, file_size, sha256_hash, created_at, created_by FROM attachments WHERE id = :id"
-        ), {"id": id}).fetchone()
+        att = db.query(Attachment).with_entities(
+            Attachment.filename, Attachment.file_path, Attachment.mime_type,
+            Attachment.file_size, Attachment.sha256_hash,
+            Attachment.created_at, Attachment.created_by,
+        ).filter(Attachment.id == id).first()
 
         if not att:
             raise HTTPException(404, "附件不存在")

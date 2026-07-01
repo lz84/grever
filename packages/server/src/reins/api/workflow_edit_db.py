@@ -4,8 +4,10 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import json
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from reins.common.database import get_db_manager
+from models import Workflow
 
 class WorkflowEditDbMixin:
     """DB access + DAG validation helpers for workflow editing."""
@@ -14,35 +16,33 @@ class WorkflowEditDbMixin:
     def _engine(self):
         return get_db_manager().engine
 
+    def _get_session(self) -> Session:
+        return get_db_manager().get_session()
+
     def _get_workflow_dag(self, workflow_id: str) -> Optional[dict]:
         """获取 workflow 的 DAG 数据"""
-        with self._engine.connect() as conn:
-            row = conn.execute(text(
-                "SELECT id, name, status, dag FROM workflows WHERE id = :id"
-            ), {"id": workflow_id}).fetchone()
+        workflow = self._get_session().query(Workflow).filter(Workflow.id == workflow_id).first()
 
-            if not row:
-                return None
+        if not workflow:
+            return None
 
-            dag = json.loads(row.dag) if isinstance(row.dag, str) else (row.dag or {"nodes": [], "edges": []})
-            return {
-                "id": row.id,
-                "name": row.name,
-                "status": row.status,
-                "dag": dag,
-            }
+        dag = json.loads(workflow.dag) if isinstance(workflow.dag, str) else (workflow.dag or {"nodes": [], "edges": []})
+        return {
+            "id": workflow.id,
+            "name": workflow.name,
+            "status": workflow.status,
+            "dag": dag,
+        }
 
     def _save_dag(self, workflow_id: str, dag: dict):
         """保存 DAG 到数据库"""
         now = datetime.now().isoformat()
-        with self._engine.begin() as conn:
-            conn.execute(text(
-                "UPDATE workflows SET dag = :dag, updated_at = :now WHERE id = :id"
-            ), {
-                "id": workflow_id,
-                "dag": json.dumps(dag, ensure_ascii=False),
-                "now": now,
-            })
+        session = self._get_session()
+        session.query(Workflow).filter(Workflow.id == workflow_id).update({
+            "dag": json.dumps(dag, ensure_ascii=False),
+            "updated_at": now,
+        })
+        session.commit()
 
     @staticmethod
     def _edge_src(edge: dict) -> str:
@@ -105,6 +105,7 @@ class WorkflowEditDbMixin:
                 desc = node.get("description", "")
                 input_data = json.dumps({"node_type": node_type}, ensure_ascii=False)
 
+                # EXCEPTION: SQLite ON CONFLICT upsert, not easily expressible in ORM
                 conn.execute(text("""
                     INSERT INTO workflow_steps
                     (id, workflow_id, name, description, status, dependencies,

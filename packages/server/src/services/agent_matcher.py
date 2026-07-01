@@ -6,7 +6,11 @@ Agent 自动匹配服务 Phase 2
 import json
 from loguru import logger
 from typing import Dict, List, Set
-from sqlalchemy import text
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+
+from models.agent import Agent, AgentTagWeight
+from models.industry_tag import IndustryCapabilityTag
 from reins.database import get_db_manager
 
 DIMS = ["business", "professional", "technical", "management"]
@@ -17,25 +21,23 @@ def _resolve_tag_metadata(tag_ids: List[str]) -> Dict[str, dict]:
         return {}
     engine = get_db_manager().engine
     with engine.connect() as conn:
-        placeholders = ", ".join(f":tag{i}" for i in range(len(tag_ids)))
-        params = {f"tag{i}": tid for i, tid in enumerate(tag_ids)}
-        rows = conn.execute(
-            text(
-                f"SELECT id, tag_name, tag_name_en, dimension, level, description "
-                f"FROM industry_capability_tags WHERE id IN ({placeholders})"
-            ),
-            params,
-        ).fetchall()
-    return {
-        r.id: {
-            "tag_name": r.tag_name,
-            "tag_name_en": r.tag_name_en,
-            "dimension": r.dimension,
-            "level": r.level,
-            "description": r.description,
-        }
-        for r in rows
-    }
+        session = Session(bind=conn)
+        try:
+            rows = session.query(IndustryCapabilityTag).filter(
+                IndustryCapabilityTag.id.in_(tag_ids)
+            ).all()
+            return {
+                r.id: {
+                    "tag_name": getattr(r, "tag_name", r.name),
+                    "tag_name_en": getattr(r, "tag_name_en", None),
+                    "dimension": getattr(r, "dimension", None),
+                    "level": getattr(r, "level", None),
+                    "description": r.description,
+                }
+                for r in rows
+            }
+        finally:
+            session.close()
 
 def _tags(capability_tags) -> Set[str]:
     """将多维能力标签展平为集合"""
@@ -56,35 +58,39 @@ def _tags(capability_tags) -> Set[str]:
 def _get_agent_weights(agent_id: str) -> Dict[str, float]:
     engine = get_db_manager().engine
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT tag, weight FROM agent_tag_weights WHERE agent_id = :aid"),
-            {"aid": agent_id}
-        ).fetchall()
-    return {r.tag: r.weight for r in rows}
+        session = Session(bind=conn)
+        try:
+            rows = session.query(AgentTagWeight).filter(
+                AgentTagWeight.agent_id == agent_id
+            ).all()
+            return {r.tag: r.weight for r in rows}
+        finally:
+            session.close()
 
 def _get_online_agents() -> List[Dict]:
     engine = get_db_manager().engine
     with engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT id, name, current_tasks, max_concurrent_tasks, capability_tags "
-            "FROM agents WHERE status = 'online'"
-        )).fetchall()
-    agents = []
-    for r in rows:
-        ct = {}
-        if r.capability_tags:
-            try:
-                ct = json.loads(r.capability_tags) if isinstance(r.capability_tags, str) else r.capability_tags
-            except Exception:
+        session = Session(bind=conn)
+        try:
+            rows = session.query(Agent).filter(Agent.status == "online").all()
+            agents = []
+            for r in rows:
                 ct = {}
-        agents.append({
-            "id": r.id,
-            "name": r.name,
-            "current_tasks": r.current_tasks or 0,
-            "max_concurrent_tasks": r.max_concurrent_tasks or 1,
-            "capability_tags": ct,
-        })
-    return agents
+                if r.capability_tags:
+                    try:
+                        ct = json.loads(r.capability_tags) if isinstance(r.capability_tags, str) else r.capability_tags
+                    except Exception:
+                        ct = {}
+                agents.append({
+                    "id": r.id,
+                    "name": r.name,
+                    "current_tasks": r.current_tasks or 0,
+                    "max_concurrent_tasks": r.max_concurrent_tasks or 1,
+                    "capability_tags": ct,
+                })
+            return agents
+        finally:
+            session.close()
 
 def match(capability_tags: Dict, min_score: float = 0.0, limit: int = 10) -> List[Dict]:
     """核心匹配函数：返回在线 Agent 的匹配排名"""
@@ -134,19 +140,28 @@ def match_for_goal(tags: Dict) -> List[Dict]:
 
 def update_weight(agent_id: str, tag: str, weight: float):
     engine = get_db_manager().engine
-    with engine.connect() as conn:
-        existing = conn.execute(
-            text("SELECT 1 FROM agent_tag_weights WHERE agent_id = :aid AND tag = :tag"),
-            {"aid": agent_id, "tag": tag}
-        ).fetchone()
-        with engine.begin() as txn:
+    with engine.begin() as conn:
+        session = Session(bind=conn)
+        try:
+            existing = session.query(AgentTagWeight).filter(
+                AgentTagWeight.agent_id == agent_id,
+                AgentTagWeight.tag == tag
+            ).first()
+            from sqlalchemy import func as sa_func
             if existing:
-                txn.execute(text(
-                    "UPDATE agent_tag_weights SET weight = :w, last_observed = CURRENT_TIMESTAMP "
-                    "WHERE agent_id = :aid AND tag = :tag"),
-                    {"w": weight, "aid": agent_id, "tag": tag})
+                existing.weight = weight
+                existing.last_observed = sa_func.CURRENT_TIMESTAMP
             else:
-                txn.execute(text(
-                    "INSERT INTO agent_tag_weights (agent_id, tag, weight, last_observed) "
-                    "VALUES (:aid, :tag, :w, CURRENT_TIMESTAMP)"),
-                    {"w": weight, "aid": agent_id, "tag": tag})
+                new_weight = AgentTagWeight(
+                    agent_id=agent_id,
+                    tag=tag,
+                    weight=weight,
+                    last_observed=sa_func.CURRENT_TIMESTAMP,
+                )
+                session.add(new_weight)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()

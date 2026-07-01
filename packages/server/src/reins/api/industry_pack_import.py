@@ -2,7 +2,7 @@
 Industry Pack Import API
 
 POST /api/v1/industry-packs/import
-Import an industry pack from a .nexus-pack (zip) file.
+Import an industry pack from a .grever-pack (zip) file.
 
 Sprint 110: B110-2
 """
@@ -32,15 +32,15 @@ router = APIRouter(prefix="/api/v1/industry-packs", tags=["industry-packs-import
 
 @router.post("/import")
 async def import_industry_pack(
-    file: UploadFile = File(..., description="Industry pack file (.nexus-pack)"),
+    file: UploadFile = File(..., description="Industry pack file (.grever-pack)"),
     strategy: str = Form("create", description="Import strategy: create, upsert, or force"),
     db: Session = Depends(get_db),
 ):
     """
-    Import an industry pack from a .nexus-pack (zip) file.
+    Import an industry pack from a .grever-pack (zip) file.
 
     Args:
-        file: The .nexus-pack zip file to import.
+        file: The .grever-pack zip file to import.
         strategy:
             - "create" (default): Fail with 409 if pack already exists.
             - "upsert": Update existing pack; insert if new.

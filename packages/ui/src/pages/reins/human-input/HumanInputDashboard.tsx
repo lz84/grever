@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { HUMAN_INPUT } from '../../../shared/api/paths';
+import { humanInputApi } from '../../../shared/utils/api';
 import { Link } from 'react-router-dom';
 import { User, Clock, CheckCircle, XCircle, Loader2, RefreshCw, BookOpen, ArrowRight, AlertTriangle } from 'lucide-react';
 import { Button } from "@/shared/components/ui/button";
@@ -165,13 +165,7 @@ export default function HumanInputDashboard() {
   const fetchRequests = async () => {
     try {
       setLoading(true);
-      const response = await fetch(HUMAN_INPUT.LIST_PENDING);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
+      const data = await humanInputApi.listPending();
       const requestsList = Array.isArray(data) ? data : data.requests || [];
       
       setRequests(requestsList);

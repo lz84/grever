@@ -62,11 +62,11 @@ def calc_dynamic_load(conn, agent_id: str) -> Tuple[int, int]:
     
     max_tasks = row.max_concurrent_tasks or 5
     
-    # 动态统计待处理任务
+    # 动态统计进行中任务（只算 in_progress）
     count = conn.execute(text("""
         SELECT COUNT(*) FROM tasks
         WHERE assigned_agent = :aid
-          AND status IN ('todo', 'in_progress', 'pending', 'paused', 'waiting')
+          AND status = 'in_progress'
     """), {"aid": agent_id}).scalar() or 0
     
     load = calculate_agent_load(count, max_tasks)
@@ -91,12 +91,12 @@ def calc_all_agents_load(conn) -> dict:
         max_tasks = a.max_concurrent_tasks or 5
         agent_map[a.id] = {"max": max_tasks, "count": 0}
     
-    # 一次性统计所有 agent 的待处理任务
+    # 一次性统计所有 agent 的进行中任务（只算 in_progress）
     rows = conn.execute(text("""
         SELECT assigned_agent, COUNT(*) AS cnt
         FROM tasks
         WHERE assigned_agent IS NOT NULL
-          AND status IN ('todo', 'in_progress', 'pending', 'paused', 'waiting')
+          AND status = 'in_progress'
         GROUP BY assigned_agent
     """)).fetchall()
     

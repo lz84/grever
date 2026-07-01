@@ -15,12 +15,13 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Body
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from reins.common.database import get_db
+from models import ScenarioTask, Scenario
 from models.scenario import (
-    Scenario, ScenarioProject, ScenarioProjectTask,
+    ScenarioProjectModel as ScenarioProject,
+    ScenarioProject as _ScenarioProject,
     ScenarioMetrics, ScenarioCreate, ScenarioUpdate, ScenarioResponse,
 )
 
@@ -31,57 +32,54 @@ router = APIRouter(tags=["scenarios"])
 # === Helpers ===
 
 def _count_projects(db: Session, scenario_id: str) -> int:
-    row = db.execute(
-        text("SELECT COUNT(*) FROM scenario_projects WHERE scenario_id = :sid"),
-        {"sid": scenario_id},
-    ).fetchone()
-    return row[0] if row else 0
+    return db.query(ScenarioProject).filter(
+        ScenarioProject.scenario_id == scenario_id
+    ).count()
 
 
-def _build_projects_array(db: Session, scenario_id: str) -> List[ScenarioProject]:
-    projects_result = db.execute(text("""
-        SELECT sp.id, sp.scenario_id, sp.name, sp.description, sp.order_index, sp.project_type,
-               sp.condition_type, sp.condition_data, sp.capability_tags, sp.next_step
-        FROM scenario_projects sp WHERE sp.scenario_id = :scenario_id ORDER BY sp.order_index
-    """), {"scenario_id": scenario_id})
+def _build_projects_array(db: Session, scenario_id: str) -> List[_ScenarioProject]:
+    projects = db.query(ScenarioProject).filter(
+        ScenarioProject.scenario_id == scenario_id
+    ).order_by(ScenarioProject.order_index).all()
 
-    tasks_result = db.execute(text("""
-        SELECT id, phase_name, name, description, agent_type,
-               required_capabilities, dependencies, order_in_phase,
-               estimated_hours, priority, condition_type, condition_data, project_id, executor_type
-        FROM scenario_tasks
-        WHERE scenario_id = :scenario_id AND project_id IS NOT NULL
-    """), {"scenario_id": scenario_id})
+    tasks = db.query(ScenarioTask).filter(
+        ScenarioTask.scenario_id == scenario_id,
+        ScenarioTask.project_id.isnot(None),
+    ).all()
 
     tasks_by_project: Dict[str, list] = {}
-    for row in tasks_result:
-        pid = row[12]
+    for task in tasks:
+        pid = task.project_id
         if pid:
-            task = ScenarioProjectTask(
-                id=row[0], name=row[2], description=row[3], agent_type=row[4],
-                required_capabilities=row[5], dependencies=row[6], order_in_phase=row[7],
-                estimated_hours=row[8], priority=row[9],
-                condition_type=row[10] if len(row) > 10 else 'none',
-                condition_data=row[11] if len(row) > 11 else None,
-                executor_type=row[13] if len(row) > 13 else 'ai',
-            )
-            tasks_by_project.setdefault(pid, []).append(task)
+            t = {
+                "id": task.id,
+                "name": task.name or '',
+                "description": task.description,
+                "required_capabilities": task.required_capabilities,
+                "dependencies": task.dependencies,
+                "order_in_phase": task.order_in_phase,
+                "priority": task.priority,
+                "condition_type": task.condition_type or 'none',
+                "condition_data": task.condition_data,
+                "executor_type": task.executor_type or 'ai',
+            }
+            tasks_by_project.setdefault(pid, []).append(t)
 
-    projects = []
-    for proj_row in projects_result:
-        project = ScenarioProject(
-            id=proj_row[0], name=proj_row[2],
-            description=proj_row[3] if len(proj_row) > 3 else None,
-            order=proj_row[4], agent_type=None, required_capabilities=None,
-            condition_type=proj_row[6] if len(proj_row) > 6 else 'none',
-            condition_data=_parse_json_field(proj_row[7]) if len(proj_row) > 7 else None,
-            project_type=proj_row[5] if len(proj_row) > 5 else 'mandatory',
-            capability_tags=_parse_json_field(proj_row[8]) if len(proj_row) > 8 else None,
-            next_step=_parse_json_field(proj_row[9]) if len(proj_row) > 9 else None,
-            tasks=tasks_by_project.get(proj_row[0], []),
+    result = []
+    for proj in projects:
+        project = _ScenarioProject(
+            id=proj.id, name=proj.name,
+            description=proj.description,
+            order=proj.order_index, agent_type=None, required_capabilities=None,
+            condition_type=proj.condition_type or 'none',
+            condition_data=proj.condition_data,
+            project_type=proj.project_type or 'mandatory',
+            capability_tags=proj.capability_tags,
+            next_step=proj.next_step,
+            tasks=tasks_by_project.get(proj.id, []),
         )
-        projects.append(project)
-    return projects
+        result.append(project)
+    return result
 
 
 def _parse_json_field(value):
@@ -96,9 +94,7 @@ def _parse_json_field(value):
 
 
 def _verify_scenario_exists(db: Session, scenario_id: str) -> bool:
-    row = db.execute(
-        text("SELECT id FROM scenarios WHERE id = :id"), {"id": scenario_id}
-    ).fetchone()
+    row = db.query(Scenario).filter(Scenario.id == scenario_id).first()
     return row is not None
 
 
@@ -125,21 +121,20 @@ def _build_scenario_response(db: Session, scenario: Scenario) -> ScenarioRespons
 
     projects = _build_projects_array(db, scenario.id)
 
-    task_templates_result = db.execute(text("""
-        SELECT id, phase_name, name, description, agent_type,
-               required_capabilities, dependencies, order_in_phase,
-               estimated_hours, priority, condition_type, condition_data, executor_type
-        FROM scenario_tasks WHERE scenario_id = :scenario_id
-    """), {"scenario_id": scenario.id})
-    task_templates = []
-    for row in task_templates_result:
-        task_templates.append({
-            "id": row[0], "phase_name": row[1], "name": row[2], "description": row[3],
-            "agent_type": row[4], "required_capabilities": row[5], "dependencies": row[6],
-            "order_in_phase": row[7], "estimated_hours": row[8], "priority": row[9],
-            "condition_type": row[10] if len(row) > 10 else 'none',
-            "condition_data": row[11] if len(row) > 11 else None,
-            "executor_type": row[12] if len(row) > 12 else 'ai',
+    task_templates = db.query(ScenarioTask).filter(
+        ScenarioTask.scenario_id == scenario.id
+    ).all()
+    task_templates_list = []
+    for t in task_templates:
+        task_templates_list.append({
+            "id": t.id, "phase_name": t.phase_name, "name": t.name, "description": t.description,
+            "required_capabilities": t.required_capabilities,
+            "dependencies": t.dependencies,
+            "order_in_phase": t.order_in_phase,
+            "priority": t.priority,
+            "condition_type": t.condition_type or 'none',
+            "condition_data": t.condition_data,
+            "executor_type": t.executor_type or 'ai',
         })
 
     fullset_data = scenario.fullset
@@ -168,7 +163,7 @@ def _build_scenario_response(db: Session, scenario: Scenario) -> ScenarioRespons
         versions=versions_data if isinstance(versions_data, list) else [],
         template_dag=json.loads(scenario.template_dag) if scenario.template_dag and isinstance(scenario.template_dag, str) else (scenario.template_dag or None),
         agent_requirements=json.loads(scenario.agent_requirements) if scenario.agent_requirements and isinstance(scenario.agent_requirements, str) else (scenario.agent_requirements or None),
-        task_templates=task_templates, projects=projects, fullset=fullset_data,
+        task_templates=task_templates_list, projects=projects, fullset=fullset_data,
         goal_capability_tags=gct_data,
         created_at=scenario.created_at.isoformat() if hasattr(scenario.created_at, 'isoformat') and scenario.created_at else str(scenario.created_at) if scenario.created_at else None,
         updated_at=scenario.updated_at.isoformat() if hasattr(scenario.updated_at, 'isoformat') and scenario.updated_at else str(scenario.updated_at) if scenario.updated_at else None,
@@ -193,51 +188,48 @@ def _create_scenario_with_projects(db: Session, data: dict) -> Scenario:
         for idx, proj in enumerate(projects_data):
             sp_id = proj.get('id') or f"sp-{uuid.uuid4().hex[:12]}"
             proj_type = proj.get('project_type', proj.get('type', 'mandatory'))
-            db.execute(text("""
-                INSERT INTO scenario_projects
-                    (id, scenario_id, name, description, project_type, condition_type,
-                     condition_data, next_step, capability_tags, order_index)
-                VALUES (:id, :sid, :name, :desc, :ptype, :ctype, :cdata, :nstep, :ctags, :oindex)
-            """), {
-                "id": sp_id, "sid": db_scenario.id, "name": proj.get('name', ''),
-                "desc": proj.get('description', ''), "ptype": proj_type,
-                "ctype": proj.get('condition_type', 'none'),
-                "cdata": json.dumps(proj.get('condition_data')) if proj.get('condition_data') else None,
-                "nstep": json.dumps(proj.get('next_step')) if proj.get('next_step') else None,
-                "ctags": json.dumps(proj.get('capability_tags', {})) if proj.get('capability_tags') else '{}',
-                "oindex": idx,
-            })
+            sp = ScenarioProject(
+                id=sp_id,
+                scenario_id=db_scenario.id,
+                name=proj.get('name', ''),
+                description=proj.get('description', ''),
+                project_type=proj_type,
+                condition_type=proj.get('condition_type', 'none'),
+                condition_data=json.dumps(proj.get('condition_data')) if proj.get('condition_data') else None,
+                next_step=json.dumps(proj.get('next_step')) if proj.get('next_step') else None,
+                capability_tags=json.dumps(proj.get('capability_tags', {})) if proj.get('capability_tags') else '{}',
+                order_index=idx,
+            )
+            db.add(sp)
             for tidx, task in enumerate(proj.get('tasks', [])):
                 task_id = task.get('id') or f"task-{uuid.uuid4().hex[:12]}"
-                db.execute(text("""
-                    INSERT INTO scenario_tasks
-                        (id, scenario_id, project_id, phase_name, name, description, agent_type,
-                         required_capabilities, dependencies, order_in_phase, estimated_hours,
-                         priority, condition_type, condition_data, executor_type)
-                    VALUES (:id, :sid, :pid, :phase, :name, :desc, :agent,
-                            :rcaps, :deps, :oip, :ehours, :priority, :ctype, :cdata, :executor_type)
-                """), {
-                    "id": task_id, "sid": db_scenario.id, "pid": sp_id,
-                    "phase": proj.get('name', ''), "name": task.get('name', ''),
-                    "desc": task.get('description', ''), "agent": task.get('agent_type'),
-                    "rcaps": json.dumps(task.get('required_capabilities', [])) if task.get('required_capabilities') else None,
-                    "deps": json.dumps(task.get('dependencies', [])) if task.get('dependencies') else None,
-                    "oip": task.get('order_in_phase', tidx), "ehours": task.get('estimated_hours'),
-                    "priority": task.get('priority', 'medium'),
-                    "ctype": task.get('condition_type', 'none'),
-                    "cdata": json.dumps(task.get('condition_data')) if task.get('condition_data') else None,
-                    "executor_type": task.get('executor_type', 'ai'),
-                })
+                st = ScenarioTask(
+                    id=task_id,
+                    scenario_id=db_scenario.id,
+                    project_id=sp_id,
+                    phase_name=proj.get('name', ''),
+                    name=task.get('name', ''),
+                    description=task.get('description', ''),
+                    required_capabilities=json.dumps(task.get('required_capabilities', [])) if task.get('required_capabilities') else None,
+                    dependencies=json.dumps(task.get('dependencies', [])) if task.get('dependencies') else None,
+                    order_in_phase=task.get('order_in_phase', tidx),
+                    priority=task.get('priority', 'medium'),
+                    condition_type=task.get('condition_type', 'none'),
+                    condition_data=json.dumps(task.get('condition_data')) if task.get('condition_data') else None,
+                    executor_type=task.get('executor_type', 'ai'),
+                )
+                db.add(st)
     elif steps_data:
         for idx, step in enumerate(steps_data):
             sp_id = step.get('id') or f"sp-{uuid.uuid4().hex[:12]}"
-            db.execute(text("""
-                INSERT INTO scenario_projects (id, scenario_id, name, description, order_index)
-                VALUES (:id, :sid, :name, :desc, :oindex)
-            """), {
-                "id": sp_id, "sid": db_scenario.id, "name": step.get('name', ''),
-                "desc": '', "oindex": step.get('order', idx),
-            })
+            sp = ScenarioProject(
+                id=sp_id,
+                scenario_id=db_scenario.id,
+                name=step.get('name', ''),
+                description='',
+                order_index=step.get('order', idx),
+            )
+            db.add(sp)
 
     db.commit()
     db.refresh(db_scenario)
@@ -247,46 +239,45 @@ def _create_scenario_with_projects(db: Session, data: dict) -> Scenario:
 def _update_scenario_with_projects(db: Session, scenario: Scenario, data: dict) -> Scenario:
     projects_data = data.get('projects')
     if projects_data is not None:
-        db.execute(text("DELETE FROM scenario_tasks WHERE scenario_id = :sid"), {"sid": scenario.id})
-        db.execute(text("DELETE FROM scenario_projects WHERE scenario_id = :sid"), {"sid": scenario.id})
+        # Delete existing tasks and projects
+        db.query(ScenarioTask).filter(ScenarioTask.scenario_id == scenario.id).delete()
+        db.query(ScenarioProject).filter(ScenarioProject.scenario_id == scenario.id).delete()
+
         for idx, proj in enumerate(projects_data):
             sp_id = proj.get('id') or f"sp-{uuid.uuid4().hex[:12]}"
             proj_type = proj.get('project_type', proj.get('type', 'mandatory'))
-            db.execute(text("""
-                INSERT INTO scenario_projects
-                    (id, scenario_id, name, description, project_type, condition_type,
-                     condition_data, next_step, capability_tags, order_index)
-                VALUES (:id, :sid, :name, :desc, :ptype, :ctype, :cdata, :nstep, :ctags, :oindex)
-            """), {
-                "id": sp_id, "sid": scenario.id, "name": proj.get('name', ''),
-                "desc": proj.get('description', ''), "ptype": proj_type,
-                "ctype": proj.get('condition_type', 'none'),
-                "cdata": json.dumps(proj.get('condition_data')) if proj.get('condition_data') else None,
-                "nstep": json.dumps(proj.get('next_step')) if proj.get('next_step') else None,
-                "ctags": json.dumps(proj.get('capability_tags', {})) if proj.get('capability_tags') else '{}',
-                "oindex": idx,
-            })
+            sp = ScenarioProject(
+                id=sp_id,
+                scenario_id=scenario.id,
+                name=proj.get('name', ''),
+                description=proj.get('description', ''),
+                project_type=proj_type,
+                condition_type=proj.get('condition_type', 'none'),
+                condition_data=json.dumps(proj.get('condition_data')) if proj.get('condition_data') else None,
+                next_step=json.dumps(proj.get('next_step')) if proj.get('next_step') else None,
+                capability_tags=json.dumps(proj.get('capability_tags', {})) if proj.get('capability_tags') else '{}',
+                order_index=idx,
+            )
+            db.add(sp)
             for tidx, task in enumerate(proj.get('tasks', [])):
                 task_id = task.get('id') or f"task-{uuid.uuid4().hex[:12]}"
-                db.execute(text("""
-                    INSERT INTO scenario_tasks
-                        (id, scenario_id, project_id, phase_name, name, description, agent_type,
-                         required_capabilities, dependencies, order_in_phase, estimated_hours,
-                         priority, condition_type, condition_data, executor_type)
-                    VALUES (:id, :sid, :pid, :phase, :name, :desc, :agent,
-                            :rcaps, :deps, :oip, :ehours, :priority, :ctype, :cdata, :executor_type)
-                """), {
-                    "id": task_id, "sid": scenario.id, "pid": sp_id,
-                    "phase": proj.get('name', ''), "name": task.get('name', ''),
-                    "desc": task.get('description', ''), "agent": task.get('agent_type'),
-                    "rcaps": json.dumps(task.get('required_capabilities', [])) if task.get('required_capabilities') else None,
-                    "deps": json.dumps(task.get('dependencies', [])) if task.get('dependencies') else None,
-                    "oip": task.get('order_in_phase', tidx), "ehours": task.get('estimated_hours'),
-                    "priority": task.get('priority', 'medium'),
-                    "ctype": task.get('condition_type', 'none'),
-                    "cdata": json.dumps(task.get('condition_data')) if task.get('condition_data') else None,
-                    "executor_type": task.get('executor_type', 'ai'),
-                })
+                st = ScenarioTask(
+                    id=task_id,
+                    scenario_id=scenario.id,
+                    project_id=sp_id,
+                    phase_name=proj.get('name', ''),
+                    name=task.get('name', ''),
+                    description=task.get('description', ''),
+                    required_capabilities=json.dumps(task.get('required_capabilities', [])) if task.get('required_capabilities') else None,
+                    dependencies=json.dumps(task.get('dependencies', [])) if task.get('dependencies') else None,
+                    order_in_phase=task.get('order_in_phase', tidx),
+                    priority=task.get('priority', 'medium'),
+                    condition_type=task.get('condition_type', 'none'),
+                    condition_data=json.dumps(task.get('condition_data')) if task.get('condition_data') else None,
+                    executor_type=task.get('executor_type', 'ai'),
+                )
+                db.add(st)
+
     for key, value in data.items():
         if key not in ('projects', 'steps', 'task_templates', 'goal_capability_tags') and value is not None:
             setattr(scenario, key, value)
@@ -365,8 +356,8 @@ def delete_scenario(scenario_id: str, db: Session = Depends(get_db)):
         scenario = db.query(Scenario).filter(Scenario.id == scenario_id).first()
         if not scenario:
             raise HTTPException(status_code=404, detail="Scenario not found")
-        db.execute(text("DELETE FROM scenario_tasks WHERE scenario_id = :sid"), {"sid": scenario_id})
-        db.execute(text("DELETE FROM scenario_projects WHERE scenario_id = :sid"), {"sid": scenario_id})
+        db.query(ScenarioTask).filter(ScenarioTask.scenario_id == scenario_id).delete()
+        db.query(ScenarioProject).filter(ScenarioProject.scenario_id == scenario_id).delete()
         db.delete(scenario)
         db.commit()
     except HTTPException:

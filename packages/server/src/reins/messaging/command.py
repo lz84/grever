@@ -1,4 +1,4 @@
-"""Nexus Command Bus — 命令分发总线"""
+"""Grever Command Bus — 命令分发总线"""
 import asyncio
 import time
 import uuid

@@ -15,7 +15,7 @@ from grasp.facade.models import (
 )
 from grasp.common.poison_detector import PoisonDetector
 from grasp.common.quality_validator import QualityValidator
-from shared.common.exceptions import NexusException, ErrorCode
+from shared.common.exceptions import GreverException, ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ VALID_DOMAINS = frozenset([
 ])
 
 
-class UnknownBackendError(NexusException):
+class UnknownBackendError(GreverException):
     """认知存储后端未知 — 缓存和 DB 都找不到记录"""
 
     def __init__(self, cognition_id: str):
@@ -61,9 +61,9 @@ _ADAPTER_INTERNAL_EXCEPTIONS = (
 )
 
 
-def _wrap_adapter_error(operation: str, exc: Exception) -> NexusException:
+def _wrap_adapter_error(operation: str, exc: Exception) -> GreverException:
     """
-    将适配器内部异常统一包装为 NexusException。
+    将适配器内部异常统一包装为 GreverException。
 
     - 不泄露适配器内部异常类型名、traceback 等细节
     - 根据操作类型分配对应的 ErrorCode
@@ -74,7 +74,7 @@ def _wrap_adapter_error(operation: str, exc: Exception) -> NexusException:
     # KeyError → 认知不存在（更有语义的错误码）
     if isinstance(exc, KeyError):
         key = str(exc).strip("'\"")
-        return NexusException(
+        return GreverException(
             code=ErrorCode.GRASP_NOT_FOUND,
             message=f"认知 '{key}' 不存在",
             details={"cognition_id": key},
@@ -82,14 +82,14 @@ def _wrap_adapter_error(operation: str, exc: Exception) -> NexusException:
 
     # RuntimeError → 后端不可用或配置问题
     if isinstance(exc, RuntimeError):
-        return NexusException(
+        return GreverException(
             code=ErrorCode.GRASP_BACKEND_UNAVAILABLE,
             message=str(exc),
             details={"operation": operation},
         )
 
     # 其他内部异常 → 按操作类型分配错误码
-    return NexusException(
+    return GreverException(
         code=code,
         message=f"认知后端执行 {operation} 时发生内部错误",
         details={"operation": operation},
@@ -111,7 +111,7 @@ class GraspFacade:
     5. cognition_id 与 backend 映射（确保 update/delete 定位到正确后端）
     6. 幂等性保证（content hash 查重）
     7. 统一响应格式
-    8. 统一异常包装（适配器异常 → NexusException）
+    8. 统一异常包装（适配器异常 → GreverException）
     """
 
     # P0-1: LRU 缓存上限
@@ -220,7 +220,7 @@ class GraspFacade:
             # 查重失败不影响主流程，记录日志后继续
             logger.warning(f"[GraspFacade] content hash 查重失败: {e}")
             existing = None
-        except NexusException:
+        except GreverException:
             raise
         except Exception as e:
             logger.warning(f"[GraspFacade] content hash 查重异常: {e}")
@@ -357,7 +357,7 @@ class GraspFacade:
     def _validate_domain(self, domain: Optional[str]):
         """P1-7: domain 枚举校验"""
         if domain is not None and domain not in VALID_DOMAINS:
-            raise NexusException(
+            raise GreverException(
                 code=ErrorCode.GRASP_INVALID_CONTENT,
                 message=f"非法 domain: '{domain}'，合法值: {sorted(VALID_DOMAINS)}"
             )
@@ -472,7 +472,7 @@ class GraspFacade:
     def _validate_content(self, content: str):
         """验证内容不为空"""
         if not content or not content.strip():
-            raise NexusException(
+            raise GreverException(
                 code=ErrorCode.GRASP_INVALID_CONTENT,
                 message="认知内容不能为空"
             )
@@ -481,7 +481,7 @@ class GraspFacade:
         """毒药检测"""
         is_poison, risks = self._poison.detect(content)
         if is_poison:
-            raise NexusException(
+            raise GreverException(
                 code=ErrorCode.GRASP_POISON_DETECTED,
                 message="检测到认知投毒，请求已被拒绝",
                 details={"risk_factors": risks},

@@ -263,41 +263,8 @@ class PackListResponse(BaseModel):
     page: int
     page_size: int
 
-# ============ Pack Content Schemas ============
-
-class IndustryPackContentItem(BaseModel):
-    """行业包内容关联项"""
-    pack_id: str
-    content_type: str  # tag/scenario/skill/knowledge/agent
-    content_id: str
+# ============ Pack Detail Schema ============
 
 class IndustryPackDetailResponse(IndustryPackResponse):
-    """行业包详情响应（含内容列表）"""
-    contents: List[IndustryPackContentItem] = []
-
-    @classmethod
-    def from_orm(cls, pack, contents=None) -> "IndustryPackDetailResponse":
-        content_list = [
-            IndustryPackContentItem(
-                pack_id=c.pack_id,
-                content_type=c.content_type,
-                content_id=c.content_id,
-            )
-            for c in (contents or [])
-        ]
-        return cls(
-            id=pack.id,
-            name=pack.name,
-            industry=pack.industry,
-            version=pack.version,
-            description=pack.description,
-            tags_count=pack.tags_count or 0,
-            scenarios_count=pack.scenarios_count or 0,
-            skills_count=pack.skills_count or 0,
-            status=pack.status,
-            pack_type=getattr(pack, 'pack_type', 'standard'),
-            base_pack_id=getattr(pack, 'base_pack_id', None),
-            created_at=pack.created_at,
-            updated_at=pack.updated_at,
-            contents=content_list,
-        )
+    """行业包详情响应"""
+    pass

@@ -22,12 +22,12 @@ from shared.exception.error_response import ErrorResponse, APIError
 
 logger = logging.getLogger(__name__)
 
-# Backward compat: NexusException was planned at nexus.common.exceptions
+# Backward compat: GreverException was planned at nexus.common.exceptions
 # but lives at exception.exceptions
 try:
-    from shared.exception.exceptions import NexusException
+    from shared.exception.exceptions import GreverException
 except ImportError:
-    NexusException = None  # type: ignore
+    GreverException = None  # type: ignore
 
 
 def format_exception_details(exc: Exception) -> Dict[str, Any]:
@@ -51,10 +51,10 @@ def create_error_response(
     创建错误响应（P5-09-02）
 
     支持两种调用方式：
-    1. create_error_response(exc: NexusException) - 使用 exc.http_status
+    1. create_error_response(exc: GreverException) - 使用 exc.http_status
     2. create_error_response(ErrorCode.INVALID_PARAMETER, message="...", details={...})
 
-    :param exc_or_code: NexusException 实例或 ErrorCode 枚举
+    :param exc_or_code: GreverException 实例或 ErrorCode 枚举
     :param message: 自定义消息（可选）
     :param details: 详细信息（可选）
     :param include_traceback: 是否包含堆栈跟踪（开发环境）
@@ -67,8 +67,8 @@ def create_error_response(
             message=message,
             details=details,
         )
-    elif NexusException and isinstance(exc_or_code, NexusException):
-        # 来自 nexus.common.exceptions 的 NexusException
+    elif GreverException and isinstance(exc_or_code, GreverException):
+        # 来自 nexus.common.exceptions 的 GreverException
         # 使用其自身的 http_status 属性
         exc = exc_or_code
         body = exc.to_dict()
@@ -132,7 +132,7 @@ def register_fastapi_exception_handlers(app) -> None:
     ```
 
     注册的处理器:
-    1. NexusException → 结构化错误响应
+    1. GreverException → 结构化错误响应
     2. ValueError → 400 参数错误
     3. Exception → 捕获所有未预期异常，返回通用 500
     """
@@ -272,12 +272,12 @@ def handle_exceptions(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except (NexusException, Exception) if NexusException else Exception:
+        except (GreverException, Exception) if GreverException else Exception:
             raise
         except Exception as e:
             logger.exception(f"Unexpected error in {func.__name__}")
-            if NexusException:
-                raise NexusException(
+            if GreverException:
+                raise GreverException(
                     code=ErrorCode.INTERNAL_ERROR,
                     message=f"Unexpected error in {func.__name__}: {str(e)}",
                     cause=e,
@@ -299,12 +299,12 @@ async def async_handle_exceptions(func):
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except (NexusException, Exception) if NexusException else Exception:
+        except (GreverException, Exception) if GreverException else Exception:
             raise
         except Exception as e:
             logger.exception(f"Unexpected error in {func.__name__}")
-            if NexusException:
-                raise NexusException(
+            if GreverException:
+                raise GreverException(
                     code=ErrorCode.INTERNAL_ERROR,
                     message=f"Unexpected error in {func.__name__}: {str(e)}",
                     cause=e,

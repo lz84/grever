@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { HUMAN_INPUT } from '../api/paths';
+import { humanInputApi } from '../utils/api';
 
 interface HumanInputRequest {
   id: string;
@@ -33,11 +33,7 @@ const HumanInputWidget: React.FC<HumanInputWidgetProps> = ({ limit = 5 }) => {
   const fetchHumanInputRequests = async () => {
     try {
       setLoading(true);
-      const response = await fetch(HUMAN_INPUT.LIST_PENDING);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await humanInputApi.listPending();
       const requestsList = Array.isArray(data) ? data : data.requests || [];
       const limitedRequests = limit ? requestsList.slice(0, limit) : requestsList;
       setRequests(limitedRequests);

@@ -44,6 +44,9 @@ export interface IndustryPack {
   tags_count: number
   scenarios_count: number
   skills_count: number
+  knowledge_count: number
+  agent_schemes_count: number
+  versions_count: number
   status: PackStatus
   pack_type?: PackType
   base_pack_id?: string

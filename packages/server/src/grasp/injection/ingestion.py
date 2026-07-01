@@ -71,7 +71,7 @@ class DocumentIngestion:
                 results[file_path] = cognition_ids
             except Exception as e:
                 results[file_path] = []
-                print(f"Failed to ingest {file_path}: {str(e)}")
+                logger.error(f"Failed to ingest {file_path}: {str(e)}", exc_info=True)
         
         return results
 

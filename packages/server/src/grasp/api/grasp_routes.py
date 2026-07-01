@@ -14,7 +14,7 @@ from grasp.facade.schemas import (
     BackendStatusResponse, SwitchBackendRequest,
 )
 from grasp.facade.models import CognitionInput
-from shared.common.exceptions import NexusException
+from shared.common.exceptions import GreverException
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +34,13 @@ def get_facade() -> GraspFacade:
 def _facade_error_response(e: Exception, operation: str) -> JSONResponse:
     """
     将 facade 层异常转换为标准 JSON 响应。
-    - NexusException：已统一包装，直接提取错误信息
+    - GreverException：已统一包装，直接提取错误信息
     - 其他异常：fallback，不泄露内部细节
 
     直接返回 JSONResponse 而非 HTTPException，避免被全局异常处理器二次转换。
     """
-    if isinstance(e, NexusException):
-        # NexusException 已包含 ErrorCode、message、details
+    if isinstance(e, GreverException):
+        # GreverException 已包含 ErrorCode、message、details
         # 不暴露内部异常类型名或 traceback
         return JSONResponse(
             status_code=e.http_status,

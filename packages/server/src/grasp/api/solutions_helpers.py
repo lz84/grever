@@ -33,24 +33,29 @@ def _parse_json_field(val):
     return val
 
 def _row_to_solution(row) -> dict:
-    """将数据库行转为方案字典"""
+    """将数据库行转为方案字典（兼容 dict 或 ORM 对象）"""
     if row is None:
         return None
+    # Support both dict (.get) and ORM object (getattr)
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
     return {
-        "id": row.get("id"),
-        "goal_id": row.get("goal_id"),
-        "round": row.get("round"),
-        "name": row.get("name"),
-        "status": row.get("status"),
-        "parameters": _parse_json_field(row.get("parameters")),
-        "dimensions": _parse_json_field(row.get("dimensions")),
-        "score": row.get("score"),
-        "is_optimal": bool(row.get("is_optimal", 0)),
-        "project_ids": _parse_json_field(row.get("project_ids")),
-        "task_ids": _parse_json_field(row.get("task_ids")),
-        "constraints": _parse_json_field(row.get("constraints")),
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
+        "id": _get(row, "id"),
+        "goal_id": _get(row, "goal_id"),
+        "round": _get(row, "round"),
+        "name": _get(row, "name"),
+        "status": _get(row, "status"),
+        "parameters": _parse_json_field(_get(row, "parameters")),
+        "dimensions": _parse_json_field(_get(row, "dimensions")),
+        "score": _get(row, "score"),
+        "is_optimal": bool(_get(row, "is_optimal", 0)),
+        "project_ids": _parse_json_field(_get(row, "project_ids")),
+        "task_ids": _parse_json_field(_get(row, "task_ids")),
+        "constraints": _parse_json_field(_get(row, "constraints")),
+        "created_at": _get(row, "created_at"),
+        "updated_at": _get(row, "updated_at"),
     }
 # ============ 收敛判断核心函数 ============
 import statistics
@@ -58,41 +63,33 @@ import statistics
 def _create_solution(db: Session, goal_id: str, round_num: int, name: str,
                      score: float = None, project_ids: list = None,
                      task_ids: list = None, constraints: dict = None,
-                     status: str = "compliant") -> dict:
+                     status: str = "compliant",
+                     parameters=None, dimensions=None) -> dict:
     """创建方案并写入数据库"""
     sol_id = f"sol-{uuid.uuid4().hex[:12]}"
     now = datetime.utcnow()
 
-    db.execute(
-        text("""
-            INSERT INTO solutions (id, goal_id, round, name, status, parameters, dimensions,
-                                   score, is_optimal, project_ids, task_ids, constraints,
-                                   created_at, updated_at)
-            VALUES (:id, :goal_id, :round, :name, :status, :parameters, :dimensions,
-                    :score, 0, :project_ids, :task_ids, :constraints, :created_at, :updated_at)
-        """),
-        {
-            "id": sol_id,
-            "goal_id": goal_id,
-            "round": round_num,
-            "name": name,
-            "status": status,
-            "parameters": _serialize(parameters),
-            "dimensions": _serialize(dimensions),
-            "score": score,
-            "project_ids": _serialize(project_ids),
-            "task_ids": _serialize(task_ids),
-            "constraints": _serialize(constraints),
-            "created_at": now.isoformat(),
-            "updated_at": now.isoformat(),
-        }
+    new_solution = Solution(
+        id=sol_id,
+        goal_id=goal_id,
+        round=round_num,
+        name=name,
+        status=status,
+        parameters=_serialize(parameters),
+        dimensions=_serialize(dimensions),
+        score=score,
+        is_optimal=False,
+        project_ids=_serialize(project_ids),
+        task_ids=_serialize(task_ids),
+        constraints=_serialize(constraints),
+        created_at=now,
+        updated_at=now,
     )
+    db.add(new_solution)
     db.commit()
 
-    row = db.execute(
-        text("SELECT * FROM solutions WHERE id = :id"),
-        {"id": sol_id}
-    ).mappings().fetchone()
+    # Fetch the created solution via ORM
+    row = db.query(Solution).filter(Solution.id == sol_id).first()
 
     return _row_to_solution(row)
 
@@ -146,10 +143,9 @@ def compare_solutions(goal_id: str, db: Session) -> dict:
         return (value - min_val) / (max_val - min_val) * 100.0
 
     # 1. 获取该 goal 下所有方案
-    rows = db.execute(
-        text("SELECT * FROM solutions WHERE goal_id = :gid ORDER BY round ASC, created_at ASC"),
-        {"gid": goal_id}
-    ).mappings().fetchall()
+    rows = db.query(Solution).filter(
+        Solution.goal_id == goal_id
+    ).order_by(Solution.round.asc(), Solution.created_at.asc()).all()
 
     if not rows:
         return {"goal_id": goal_id, "message": "No solutions found", "updated": 0}
@@ -257,31 +253,28 @@ def compare_solutions(goal_id: str, db: Session) -> dict:
 
         # 更新 DB
         now_iso = datetime.utcnow().isoformat()
-        db.execute(
-            text("""
-                UPDATE solutions SET score = :score, status = :status_val, updated_at = :updated_at
-                WHERE id = :id
-            """),
-            {"score": round(score, 2), "status_val": status_val, "updated_at": now_iso, "id": sol["id"]}
-        )
+        db.query(Solution).filter(Solution.id == sol["id"]).update({
+            "score": round(score, 2),
+            "status": status_val,
+            "updated_at": now_iso,
+        })
         updated += 1
 
     # 5. 标记最优方案（score 最高者 is_optimal=1）
-    db.execute(text("UPDATE solutions SET is_optimal = 0 WHERE goal_id = :gid"), {"gid": goal_id})
-    best_row = db.execute(
-        text("SELECT id FROM solutions WHERE goal_id = :gid AND score IS NOT NULL ORDER BY score DESC LIMIT 1"),
-        {"gid": goal_id}
-    ).fetchone()
-    if best_row:
-        db.execute(text("UPDATE solutions SET is_optimal = 1 WHERE id = :id"), {"id": best_row[0]})
+    db.query(Solution).filter(Solution.goal_id == goal_id).update({"is_optimal": False})
+    best = db.query(Solution.id).filter(
+        Solution.goal_id == goal_id,
+        Solution.score.isnot(None)
+    ).order_by(Solution.score.desc()).first()
+    if best:
+        db.query(Solution).filter(Solution.id == best.id).update({"is_optimal": True})
 
     db.commit()
 
     # 6. 返回结果
-    result_rows = db.execute(
-        text("SELECT id, name, score, status, is_optimal FROM solutions WHERE goal_id = :gid ORDER BY score DESC"),
-        {"gid": goal_id}
-    ).mappings().fetchall()
+    result_rows = db.query(Solution).filter(
+        Solution.goal_id == goal_id
+    ).order_by(Solution.score.desc()).all()
 
     # 7. 收敛判断（每次评分后检查）
     converged, conv_reason = check_convergence(goal_id, db)
@@ -290,7 +283,13 @@ def compare_solutions(goal_id: str, db: Session) -> dict:
     return {
         "goal_id": goal_id,
         "updated": updated,
-        "solutions": [dict(r) for r in result_rows],
+        "solutions": [{
+            "id": r.id,
+            "name": r.name,
+            "score": r.score,
+            "status": r.status,
+            "is_optimal": bool(r.is_optimal),
+        } for r in result_rows],
         "converged": converged,
         "convergence_reason": conv_reason,
         "convergence_streak": streak,

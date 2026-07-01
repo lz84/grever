@@ -1,5 +1,5 @@
 """
-Nexus Reins 仓库模块 - Agent 仓库
+Grever Reins 仓库模块 - Agent 仓库
 
 提供 AgentInfo 实体的数据持久化接口
 """

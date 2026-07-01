@@ -43,8 +43,8 @@ class Project(Base):
     workflow_id = Column(String(36), nullable=True)
     phase_order = Column(Integer, nullable=True)
     matched_scenario_id = Column(String(36), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()))
+    updated_at = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()), onupdate=lambda: int(datetime.utcnow().timestamp()))
 
     # Sprint 53: verifier agent (three-level inheritance)
     verifier_agent_id = Column(String(32), nullable=True)
@@ -59,7 +59,7 @@ class Project(Base):
     # Sprint 86: 三级上下文文档
     context_md = Column(Text, nullable=True)
 
-    members = relationship('ProjectMember', back_populates='project', lazy='select', foreign_keys='ProjectMember.project_id')
+    members = relationship('ProjectMember', back_populates='project', lazy='selectin', foreign_keys='ProjectMember.project_id')
 
     def to_dict(self):
         created = self.created_at
@@ -73,15 +73,15 @@ class Project(Base):
             'priority': self.priority,
             'assignee': self.assignee,
             'due_date': self.due_date,
-            'created_at': created.isoformat() if isinstance(created, datetime) else str(created) if created else None,
-            'updated_at': updated.isoformat() if isinstance(updated, datetime) else str(updated) if updated else None,
+            'created_at': created.isoformat() if isinstance(created, datetime) else datetime.fromtimestamp(created).strftime('%Y-%m-%dT%H:%M:%S') if isinstance(created, (int, float)) else str(created) if created else None,
+            'updated_at': updated.isoformat() if isinstance(updated, datetime) else datetime.fromtimestamp(updated).strftime('%Y-%m-%dT%H:%M:%S') if isinstance(updated, (int, float)) else str(updated) if updated else None,
             'member_count': (len(self.members) if self.members else 0) if hasattr(self, 'members') and self.members is not None else 0,
             'workflow_id': self.workflow_id,
             'phase_order': self.phase_order,
             'matched_scenario_id': self.matched_scenario_id,
             'verifier_agent_id': getattr(self, 'verifier_agent_id', None),
             # Sprint 68: 模式字段
-            'mode': getattr(self, 'mode', None) or 'normal',
+            'mode': getattr(self, 'mode', None) or 'engineering',
             # Sprint 78: dependency tracking
             'depends_on': self._parse_depends_on(),
             # Sprint 79: forward-link for DAG drawing
@@ -165,3 +165,6 @@ class ProjectResponse(ProjectResponseBase):
     next_step: Optional[List[Any]] = []
     capability_tags: Optional[dict] = {}
     context_md: Optional[str] = None  # Sprint 86: 三级上下文文档
+    # 2026-06-11: created_at/updated_at 已改为 Integer，to_dict 返回 ISO 字符串，Response schema 覆盖为 str
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None

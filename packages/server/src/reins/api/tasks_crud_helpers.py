@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from models.task import Task, TaskDependency
@@ -59,19 +58,22 @@ def _probe_agent_on_assign(agent_id: str, db: Session):
     """分配任务时立即探测目标 Agent 活性。"""
     try:
         import httpx
-        row = db.execute(sa_text("SELECT address, status FROM agents WHERE id = :aid"), {"aid": agent_id}).fetchone()
-        if not row or not row.address:
+        from models.agent import Agent
+        agent = db.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent or not agent.address:
             return
-        url = f"{row.address.rstrip('/')}/health"
+        url = f"{agent.address.rstrip('/')}/health"
         try:
             resp = httpx.get(url, timeout=5)
             if 0 < resp.status_code < 500:
                 now = datetime.now()
-                db.execute(sa_text("""
-                    UPDATE agents SET last_heartbeat = :now, status = 'online',
-                        health_status = 'online', consecutive_offline_count = 0, updated_at = :now
-                    WHERE id = :aid
-                """), {"now": now, "aid": agent_id})
+                db.query(Agent).filter(Agent.id == agent_id).update({
+                    "last_heartbeat": now,
+                    "status": "online",
+                    "health_status": "online",
+                    "consecutive_offline_count": 0,
+                    "updated_at": now,
+                })
                 db.commit()
                 logger.info(f"[ASSIGN-PROBE] ✅ Agent {agent_id} is online (HTTP {resp.status_code} at {url})")
             else:
@@ -85,9 +87,10 @@ def _probe_agent_on_assign(agent_id: str, db: Session):
 def _unblock_project_dependent_tasks(completed_project_id: str, db: Session):
     """当 Project 完成时，解锁依赖它的下游 Project 中所有 waiting 任务。"""
     try:
-        downstream_projects = db.execute(sa_text("SELECT id FROM projects WHERE depends_on = :pid"), {"pid": completed_project_id}).fetchall()
-        for row in downstream_projects:
-            child_proj_id = row[0]
+        from models.project import Project
+        from models.task import Task
+        downstream_projects = db.query(Project.id).filter(Project.depends_on == completed_project_id).all()
+        for (child_proj_id,) in downstream_projects:
             child_proj = db.query(Project).filter(Project.id == child_proj_id).first()
             if not child_proj or not child_proj.depends_on:
                 continue
@@ -99,12 +102,16 @@ def _unblock_project_dependent_tasks(completed_project_id: str, db: Session):
                     all_deps_done = False
                     break
             if all_deps_done:
-                result = db.execute(sa_text("""
-                    UPDATE tasks SET status = 'todo', blocked_reason = NULL, updated_at = :now
-                    WHERE project_id = :pid AND status = 'waiting'
-                """), {"pid": child_proj_id, "now": datetime.now()})
-                if result.rowcount > 0:
-                    logger.info(f"[PROJECT-UNBLOCK] ✅ Unblocked {result.rowcount} waiting tasks in project {child_proj_id}")
+                result = db.query(Task).filter(
+                    Task.project_id == child_proj_id,
+                    Task.status == 'waiting'
+                ).update({
+                    "status": "todo",
+                    "blocked_reason": None,
+                    "updated_at": datetime.now(),
+                }, synchronize_session=False)
+                if result > 0:
+                    logger.info(f"[PROJECT-UNBLOCK] ✅ Unblocked {result} waiting tasks in project {child_proj_id}")
     except Exception as e:
         logger.warning(f"[PROJECT-UNBLOCK] Error unblocking downstream of {completed_project_id}: {e}")
 
@@ -112,12 +119,16 @@ def _unblock_project_dependent_tasks(completed_project_id: str, db: Session):
 def _check_and_update_project_done(task_id: str, project_id: str, db: Session):
     """当任务完成时，检查 Project 是否所有任务都已完成，自动更新 Project 状态。"""
     try:
-        rows = db.execute(sa_text("SELECT status FROM tasks WHERE project_id = :pid"), {"pid": project_id}).fetchall()
+        from models.task import Task
+        rows = db.query(Task.status).filter(Task.project_id == project_id).all()
         if not rows:
             return
         all_done = all(r[0] in ('done', 'completed') for r in rows)
         if all_done:
-            db.execute(sa_text("UPDATE projects SET status = 'done', updated_at = :now WHERE id = :pid AND status != 'done'"), {"pid": project_id, "now": datetime.now()})
+            db.query(Project).filter(
+                Project.id == project_id,
+                Project.status != 'done'
+            ).update({"status": "done", "updated_at": datetime.now()})
             db.commit()
             logger.info(f"[PROJECT-DONE] ✅ Project {project_id} all tasks done → status = 'done'")
             _unblock_project_dependent_tasks(project_id, db)
@@ -128,10 +139,11 @@ def _check_and_update_project_done(task_id: str, project_id: str, db: Session):
 def _unblock_downstream_tasks(completed_task_id: str, db: Session):
     """当任务完成时，自动解锁依赖它的所有 paused 下游任务。"""
     try:
-        downstream = db.execute(sa_text("SELECT task_id FROM task_dependencies WHERE dependency_id = :dep_id"), {"dep_id": completed_task_id}).fetchall()
+        from models.task import Task
+        from models.task_dependency import TaskDependency
+        downstream = db.query(TaskDependency.task_id).filter(TaskDependency.dependency_id == completed_task_id).all()
         unblocked = []
-        for row in downstream:
-            child_id = row[0]
+        for (child_id,) in downstream:
             child = db.query(Task).filter(Task.id == child_id).first()
             if not child or child.status not in ('waiting', 'paused', 'todo'):
                 continue
@@ -160,6 +172,7 @@ def _unblock_downstream_tasks(completed_task_id: str, db: Session):
 
 def _cleanup_all_on_delete(task: Task, db: Session):
     """删除任务时清理所有依赖关系。"""
+    from sqlalchemy import Table, MetaData
     old_deps = _parse_json_list(task.depends_on)
     my_next_step = _parse_json_list(task.next_step)
     for dep_id in old_deps:
@@ -181,22 +194,32 @@ def _cleanup_all_on_delete(task: Task, db: Session):
         'task_comments', 'task_labels',
         'task_activity_log', 'task_failure_log', 'traces',
     ]
+    meta = MetaData()
     for table in required_tables:
         try:
-            db.execute(sa_text(f"DELETE FROM {table} WHERE task_id = :tid"), {"tid": task.id})
+            tbl = Table(table, meta, autoload_with=db.bind)
+            db.execute(tbl.delete().where(tbl.c.task_id == task.id))
         except Exception as e:
             logger.warning(f"[_cleanup] Failed to delete from {table}: {e}")
     # Clean up unified attachments: delete links where this task is the entity
     try:
-        db.execute(sa_text("DELETE FROM attachment_links WHERE entity_type = 'task' AND entity_id = :tid"), {"tid": task.id})
+        link_tbl = Table('attachment_links', meta, autoload_with=db.bind)
+        db.execute(link_tbl.delete().where(
+            link_tbl.c.entity_type == 'task',
+            link_tbl.c.entity_id == task.id,
+        ))
     except Exception as e:
         logger.warning(f"[_cleanup] Failed to delete attachment_links: {e}")
     # Clean up human_input_requests (model has schema_json column but DB table doesn't → ORM cascade fails)
     try:
-        db.execute(sa_text("DELETE FROM human_input_requests WHERE task_id = :tid"), {"tid": task.id})
+        hir_tbl = Table('human_input_requests', meta, autoload_with=db.bind)
+        db.execute(hir_tbl.delete().where(hir_tbl.c.task_id == task.id))
     except Exception as e:
         logger.warning(f"[_cleanup] Failed to delete human_input_requests: {e}")
     try:
-        db.execute(sa_text("DELETE FROM task_relations WHERE parent_task_id = :tid OR child_task_id = :tid"), {"tid": task.id})
+        tr_tbl = Table('task_relations', meta, autoload_with=db.bind)
+        db.execute(tr_tbl.delete().where(
+            (tr_tbl.c.parent_task_id == task.id) | (tr_tbl.c.child_task_id == task.id)
+        ))
     except Exception as e:
         logger.warning(f"[_cleanup] Failed to delete task_relations: {e}")

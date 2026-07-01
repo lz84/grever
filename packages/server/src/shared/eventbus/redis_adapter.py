@@ -25,7 +25,7 @@ from shared.eventbus.types import Event, EventPayload, TriggerMode
 
 logger = logging.getLogger(__name__)
 
-REDIS_CHANNEL_PREFIX = "nexus:events:"
+REDIS_CHANNEL_PREFIX = "grever:events:"
 REDIS_EVENT_TYPES = [
     "task_assigned", "task_completed", "task_failed",
     "task_created", "task_updated", "dispute_raised",

@@ -17,7 +17,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import text
+from sqlalchemy import Table, MetaData, func
+from models.task import Task
 
 # ============================================================
 # 数据结构
@@ -103,7 +104,7 @@ class TaskBuilder:
             "\n---\n"
             "## 验证注意事项（必须遵守）\n\n"
             "1. **HTTP timeout 至少 60 秒**：服务器在负载下响应可能较慢，timeout 过短会导致误报\n"
-            "2. **服务器地址**：始终使用 http://127.0.0.1:8097（Nexus API）\n"
+            "2. **服务器地址**：始终使用 http://127.0.0.1:8097（Grever API）\n"
             "3. **多次重试**：API 调用失败时重试 2-3 次再判定为失败\n"
             "\n---\n"
             "## 输出格式要求\n\n"
@@ -353,18 +354,18 @@ class VerificationDispatcher:
         """
         session = self._session_factory()
         try:
+            meta = MetaData()
+            capabilities_tbl = Table("capabilities", meta, autoload_with=session.bind)
+
             # --- Step 1: 查询 capabilities 表，找匹配的 category ---
             candidates = []
 
             if verifier_type:
-                rows = session.execute(
-                    text(
-                        "SELECT id, name, category, agents, usage_count "
-                        "FROM capabilities "
-                        "WHERE category = :cat AND status = 'active'"
-                    ),
-                    {"cat": verifier_type},
-                ).fetchall()
+                stmt = capabilities_tbl.select().where(
+                    capabilities_tbl.c.category == verifier_type,
+                    capabilities_tbl.c.status == "active",
+                )
+                rows = session.execute(stmt).fetchall()
 
                 for row in rows:
                     agents_list = self._parse_agents_field(row.agents)
@@ -376,15 +377,12 @@ class VerificationDispatcher:
 
             # --- Step 2b: 用关键词匹配更多候选 ---
             if keywords:
-                keyword_rows = session.execute(
-                    text(
-                        "SELECT id, name, category, agents "
-                        "FROM capabilities "
-                        "WHERE status = 'active' "
-                        "AND (LOWER(name) LIKE :kw OR LOWER(description) LIKE :kw)"
-                    ),
-                    {"kw": f"%{keywords[0]}%"},
-                ).fetchall()
+                kw = f"%{keywords[0]}%"
+                stmt = capabilities_tbl.select().where(
+                    capabilities_tbl.c.status == "active",
+                    (capabilities_tbl.c.name.ilike(kw) | capabilities_tbl.c.description.ilike(kw)),
+                )
+                keyword_rows = session.execute(stmt).fetchall()
 
                 for row in keyword_rows:
                     agents_list = self._parse_agents_field(row.agents)
@@ -396,17 +394,14 @@ class VerificationDispatcher:
 
             if not candidates:
                 # 关键修复：capabilities 表没有匹配时，回退到 task 自己的 verifier_agent_id
-                task_row = session.execute(
-                    text("SELECT verifier_agent_id FROM tasks WHERE id = :id"),
-                    {"id": task_id},
-                ).fetchone()
-                if task_row and task_row.verifier_agent_id:
+                task = session.query(Task).filter(Task.id == task_id).first()
+                if task and task.verifier_agent_id:
                     logger.info(
                         "[VerificationDispatcher] _select_agent: capabilities no match, "
                         "falling back to task verifier_agent_id=%s",
-                        task_row.verifier_agent_id,
+                        task.verifier_agent_id,
                     )
-                    return task_row.verifier_agent_id
+                    return task.verifier_agent_id
 
                 logger.warning(
                     "[VerificationDispatcher] _select_agent: no candidates "
@@ -421,7 +416,7 @@ class VerificationDispatcher:
 
             if not scored:
                 # 没有历史记录，按 usage_count 排序（从 capabilities 表）
-                scored = self._score_by_usage(candidates, session)
+                scored = self._score_by_usage(candidates, session, capabilities_tbl)
 
             # 返回得分最高的
             best_agent = scored[0]["agent_id"]
@@ -550,22 +545,23 @@ class VerificationDispatcher:
 
         score = passed_count / total_count
         """
+        meta = MetaData()
+        vlog_tbl = Table("verification_task_log", meta, autoload_with=session.bind)
         scored = []
 
         for agent_id in candidates:
-            row = session.execute(
-                text(
-                    "SELECT "
-                    "  COUNT(*) as total, "
-                    "  SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) as passed_count "
-                    "FROM verification_task_log "
-                    "WHERE agent_id = :aid"
-                ),
-                {"aid": agent_id},
-            ).fetchone()
+            stmt = (
+                vlog_tbl.select()
+                .with_only_columns([
+                    func.count().label("total"),
+                    func.sum(vlog_tbl.c.passed == 1).label("passed_count"),
+                ])
+                .where(vlog_tbl.c.agent_id == agent_id)
+            )
+            row = session.execute(stmt).fetchone()
 
-            total = row.total if row and row.total else 0
-            passed = row.passed_count if row and row.passed_count else 0
+            total = row[0] if row and row[0] else 0
+            passed = row[1] if row and row[1] else 0
 
             if total > 0:
                 score = passed / total
@@ -582,6 +578,7 @@ class VerificationDispatcher:
         self,
         candidates: List[str],
         session: Any,
+        capabilities_tbl: Table,
     ) -> List[Dict[str, Any]]:
         """
         无历史记录时，按 capabilities 表的 usage_count 排序
@@ -589,16 +586,19 @@ class VerificationDispatcher:
         scored = []
 
         for agent_id in candidates:
-            row = session.execute(
-                text(
-                    "SELECT usage_count FROM capabilities "
-                    "WHERE agents LIKE :pattern AND status = 'active' "
-                    "LIMIT 1"
-                ),
-                {"pattern": f"%{agent_id}%"},
-            ).fetchone()
+            pattern = f"%{agent_id}%"
+            stmt = (
+                capabilities_tbl.select()
+                .with_only_columns([capabilities_tbl.c.usage_count])
+                .where(
+                    capabilities_tbl.c.agents.like(pattern),
+                    capabilities_tbl.c.status == "active",
+                )
+                .limit(1)
+            )
+            row = session.execute(stmt).fetchone()
 
-            usage = row.usage_count if row else 0
+            usage = row[0] if row else 0
             scored.append({
                 "agent_id": agent_id,
                 "score": 0.5 + min(usage * 0.01, 0.4),  # usage 最高贡献 0.4
@@ -626,25 +626,20 @@ class VerificationDispatcher:
 
         session = self._session_factory()
         try:
+            meta = MetaData()
+            vlog_tbl = Table("verification_task_log", meta, autoload_with=session.bind)
             session.execute(
-                text(
-                    "INSERT INTO verification_task_log "
-                    "(id, task_id, agent_id, verifier_type, input_summary, "
-                    "output_raw, passed, message, duration_seconds) "
-                    "VALUES (:id, :task_id, :agent_id, :vtype, :input, "
-                    ":output, :passed, :message, :duration)"
+                vlog_tbl.insert().values(
+                    id=f"vlog-{uuid.uuid4().hex[:8]}",
+                    task_id=task_id,
+                    agent_id=agent_id,
+                    verifier_type=verifier_type,
+                    input_summary=input_summary[:1000],
+                    output_raw=output_raw[:5000],
+                    passed=result.passed,
+                    message=result.message[:500],
+                    duration_seconds=result.duration_seconds,
                 ),
-                {
-                    "id": f"vlog-{uuid.uuid4().hex[:8]}",
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                    "vtype": verifier_type,
-                    "input": input_summary[:1000],
-                    "output": output_raw[:5000],
-                    "passed": result.passed,
-                    "message": result.message[:500],
-                    "duration": result.duration_seconds,
-                },
             )
             session.commit()
         except Exception as e:

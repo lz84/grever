@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { SKILLS } from '../../shared/api/paths'
+import { skillsApi } from '../../shared/utils/api'
 import { Download, Search, ExternalLink, BookOpen, Code, Check, X } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/shared/components/ui/card'
 import { Badge } from '@/shared/components/ui/badge'
@@ -50,12 +50,11 @@ export default function SkillsPage() {
   const [downloading, setDownloading] = useState<string | null>(null)
   const [downloadMsg, setDownloadMsg] = useState('')
 
-  // Fetch skills from Nexus API
+  // Fetch skills from Grever API
   async function fetchSkills() {
     try {
       setLoading(true)
-      const res = await fetch(SKILLS.LIST)
-      const data = await res.json()
+      const data = await skillsApi.list()
       setSkills(data.skills || [])
     } catch (e) {
       console.error('Failed to fetch skills:', e)
@@ -117,7 +116,7 @@ export default function SkillsPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Nexus 技能库</h1>
+          <h1 className="text-3xl font-bold text-foreground">Grever 技能库</h1>
           <p className="text-muted-foreground mt-2">
             {skills.length} 个原生技能 · 4 层架构 · Agent 可随时取用
           </p>
@@ -305,7 +304,7 @@ export default function SkillsPage() {
               <ol className="list-decimal list-inside space-y-1 text-sm text-muted-foreground">
                 <li>在技能库页面浏览可用技能</li>
                 <li>点击「安装」将安装指令复制到剪贴板</li>
-                <li>将指令发送给目标智能体，智能体自动从 Nexus 下载并安装技能</li>
+                <li>将指令发送给目标智能体，智能体自动从 Grever 下载并安装技能</li>
                 <li>智能体安装完成后即可使用该技能</li>
               </ol>
             </div>

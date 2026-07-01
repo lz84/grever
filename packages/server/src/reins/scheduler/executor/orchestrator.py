@@ -18,7 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import Table, MetaData, or_
+from sqlalchemy.orm import aliased
+from models.task import Task
+from models.project import Project
+from models.agent import Agent
 
 from .dispatch_coordinator import mark_in_progress, log_activity, log_execution
 from .result_collector import collect_result, get_goal_id
@@ -158,14 +162,18 @@ class ProjectExecutor:
         """恢复孤儿任务 — DB 中 in_progress 但内存池没有的"""
         recovered = []
         try:
-            with self.db.engine.connect() as conn:
-                rows = conn.execute(
-                    text("SELECT id FROM tasks WHERE project_id = :pid AND status = 'in_progress'"),
-                    {"pid": self.project_id},
-                ).fetchall()
+            session = self.db.get_session()
+            try:
+                orphan_tasks = (
+                    session.query(Task)
+                    .filter(Task.project_id == self.project_id, Task.status == 'in_progress')
+                    .all()
+                )
+            finally:
+                session.close()
 
-            for row in rows:
-                task_id = row[0]
+            for task in orphan_tasks:
+                task_id = task.id
                 if task_id in self.in_progress:
                     continue
                 from .task_runner_compat import read_result
@@ -181,48 +189,44 @@ class ProjectExecutor:
         return recovered
 
     async def _find_ready_tasks(self) -> List[Dict[str, Any]]:
-        """找新的 ready 任务（无依赖 or 依赖全 done），只返回已分配 agent 的任务"""
+        """找新的 ready 任务（已分配 agent），只返回已分配 agent 的任务"""
         try:
-            with self.db.engine.connect() as conn:
-                query = text(
-                    "SELECT t.*, a.name as agent_name FROM tasks t "
-                    "LEFT JOIN agents a ON t.assigned_agent = a.id "
-                    "WHERE t.project_id = :project_id AND t.status = 'todo' "
-                    "AND t.assigned_agent IS NOT NULL "
-                    "AND NOT EXISTS ("
-                    "  SELECT 1 FROM task_dependencies td "
-                    "  JOIN tasks dep ON td.dependency_id = dep.id "
-                    "  WHERE td.task_id = t.id AND dep.status != 'done'"
-                    ") ORDER BY t.created_at ASC"
+            from reins.common.database import get_db_session
+            session = get_db_session()
+            try:
+                AgentAlias = aliased(Agent, name='agent')
+                tasks = (
+                    session.query(Task, AgentAlias.name.label('agent_name'))
+                    .outerjoin(AgentAlias, Task.assigned_agent == AgentAlias.id)
+                    .filter(
+                        Task.project_id == self.project_id,
+                        Task.status == 'todo',
+                        Task.assigned_agent.isnot(None),
+                    )
+                    .order_by(Task.created_at.asc())
+                    .all()
                 )
-                tasks = conn.execute(query, {"project_id": self.project_id}).fetchall()
 
                 result = []
-                for row in tasks:
-                    agent_name = getattr(row, "agent_name", None) or "main"
+                for task, agent_name in tasks:
+                    agent_name = agent_name or "main"
                     result.append({
-                        "id": row.id,
-                        "title": row.title,
-                        "description": row.description,
-                        "project_id": row.project_id,
-                        "assigned_agent": row.assigned_agent,
+                        "id": task.id,
+                        "title": task.title,
+                        "description": task.description,
+                        "project_id": task.project_id,
+                        "assigned_agent": task.assigned_agent,
                         "agent_name": agent_name,
-                        "status": row.status,
-                        "acceptance_criteria": row.acceptance_criteria,
-                        "verifier_agent_id": row.verifier_agent_id,
-                        "created_at": row.created_at,
+                        "status": task.status,
+                        "acceptance_criteria": task.acceptance_criteria,
+                        "verifier_agent_id": task.verifier_agent_id,
+                        "created_at": task.created_at,
                     })
-
-                # 注入当前轮次约束
-                constraint_text = _get_constraint_text(conn, self.project_id)
-                if constraint_text:
-                    for task in result:
-                        desc = task.get("description") or ""
-                        task["description"] = f"{desc}\n\n⚙️ 当前约束：{constraint_text}"
-                    logger.info(f"[ProjectExecutor] Injected constraints: {constraint_text}", flush=True)
 
                 logger.info(f"[ProjectExecutor] Found {len(result)} ready tasks for project {self.project_id}", flush=True)
                 return result
+            finally:
+                session.close()
         except Exception as e:
             logger.error(f"[ProjectExecutor] Failed to find ready tasks for project {self.project_id}: {e}")
             return []
@@ -240,24 +244,23 @@ class ProjectExecutor:
         }
 
 
-def _get_constraint_text(conn, project_id: str) -> str:
+def _get_constraint_text(session, project_id: str) -> str:
     """获取当前轮次约束文本，注入到任务描述中"""
     try:
-        proj_row = conn.execute(
-            text("SELECT goal_id FROM projects WHERE id = :pid"),
-            {"pid": project_id},
-        ).fetchone()
-        if not proj_row:
+        project = session.query(Project.goal_id).filter(Project.id == project_id).first()
+        if not project:
             return ""
-        goal_id = proj_row[0]
+        goal_id = project.goal_id
 
-        cons_row = conn.execute(
-            text(
-                "SELECT constraints FROM iteration_constraints "
-                "WHERE goal_id = :gid ORDER BY round DESC LIMIT 1"
-            ),
-            {"gid": goal_id},
-        ).fetchone()
+        meta = MetaData()
+        constraints_tbl = Table("iteration_constraints", meta, autoload_with=session.bind)
+        stmt = (
+            constraints_tbl.select()
+            .where(constraints_tbl.c.goal_id == goal_id)
+            .order_by(constraints_tbl.c.round.desc())
+            .limit(1)
+        )
+        cons_row = session.execute(stmt).fetchone()
         if not cons_row or not cons_row[0]:
             return ""
 

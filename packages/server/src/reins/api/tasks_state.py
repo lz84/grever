@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from models.task import Task, TaskResponse
 from reins.common.database import get_db
-from reins.core.state_machine import TaskState, TaskStateTransition
-from persistence.tables import task_activity_log, execution_logs
+from reins.scheduler.statemachine import transition_task_status, batch_transition_task_status, VALID_TRANSITIONS
+from persistence.tables import execution_logs
 
 from reins.api.tasks_models import (
     BatchStatusUpdate,
@@ -34,102 +34,83 @@ def batch_update_status(batch: BatchStatusUpdate, db: Session = Depends(get_db))
     P5-03-05: 批量状态变更。
     一次性更新多个 Task 的状态,非法转换的任务会被跳过并记录在 failed 中。
     """
-    updated = 0
-    failed = []
-
+    tasks = []
     for task_id in batch.task_ids:
         task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
+        if task:
+            tasks.append(task)
+        else:
+            pass  # handled below via comparison
+
+    if not tasks:
+        return BatchUpdateResponse(updated=0, failed=[{"task_id": tid, "error": "Task not found"} for tid in batch.task_ids])
+
+    extra = {}
+    if batch.status == "blocked":
+        extra["blocked_reason"] = batch.reason or "Blocked by batch operation"
+    elif batch.status in ("todo", "in_progress"):
+        extra["blocked_reason"] = None
+
+    success, failed = batch_transition_task_status(
+        db, tasks, batch.status,
+        reason=batch.reason or "Batch status update",
+        extra=extra if extra else None,
+    )
+
+    # Add not-found tasks to failed list
+    found_ids = {t.id for t in tasks}
+    for task_id in batch.task_ids:
+        if task_id not in found_ids:
             failed.append({"task_id": task_id, "error": "Task not found"})
-            continue
 
-        try:
-            to_state = TaskState.from_string(batch.status)
-            from_state_str = task.status
-            from_state = TaskState.from_string(from_state_str)
-
-            if not TaskStateTransition.can_transition(from_state, to_state):
-                allowed = TaskStateTransition.get_allowed_transitions(from_state)
-                failed.append({
-                    "task_id": task_id,
-                    "error": f"Invalid transition: {from_state_str} → {batch.status}",
-                    "allowed": [s.value for s in allowed],
-                })
-                continue
-
-            task.status = batch.status
-            task.updated_at = db.commit()
-
-            if to_state == TaskState.IN_PROGRESS:
-                task.started_at = db.commit()
-                db.execute(
-                    execution_logs.insert().values(
-                        id=str(uuid.uuid4()),
-                        task_id=str(task_id),
-                        agent_id=task.assigned_agent or '',
-                        action='task_start',
-                        input=json.dumps({"old_status": from_state_str, "new_status": "in_progress"}),
-                        output=json.dumps({
-                            "task_id": task_id,
-                            "task_title": task.title,
-                            "goal_id": _get_goal_id_from_project(db, task.project_id),
-                        }),
-                        status='success',
-                        duration_ms=0,
-                        created_at=db.commit(),
-                        error_message='',
-                        result_summary='任务已开始',
-                        metadata=json.dumps({"source": "batch_update_status"}),
-                        connectivity_verified=True,
-                    )
-                )
-            elif to_state == TaskState.DONE:
-                task.completed_at = db.commit()
-                if not task.started_at:
-                    task.started_at = task.completed_at
-            elif to_state == TaskState.CANCELLED:
-                task.cancelled_at = db.commit()
-            elif to_state == TaskState.BLOCKED:
-                task.blocked_reason = batch.reason or "Blocked by batch operation"
-            elif to_state == TaskState.BACKLOG:
-                task.blocked_reason = None
-
+    # Log execution_logs for in_progress transitions
+    for task in success:
+        if batch.status == "in_progress":
             db.execute(
-                task_activity_log.insert().values(
-                    id=f"log-{uuid.uuid4().hex[:12]}",
-                    task_id=str(task_id),
-                    old_status=from_state_str,
-                    new_status=batch.status,
-                    reason=batch.reason or "Batch status update",
-                    actor=None,
-                    timestamp=db.commit(),
-                    extra=None,
+                execution_logs.insert().values(
+                    id=str(uuid.uuid4()),
+                    task_id=str(task.id),
+                    agent_id=task.assigned_agent or '',
+                    action='task_start',
+                    input=json.dumps({"old_status": "todo", "new_status": "in_progress"}),
+                    output=json.dumps({
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "goal_id": _get_goal_id_from_project(db, task.project_id),
+                    }),
+                    status='success',
+                    duration_ms=0,
+                    created_at=None,
+                    error_message='',
+                    result_summary='任务已开始',
+                    metadata=json.dumps({"source": "batch_update_status"}),
+                    connectivity_verified=True,
                 )
             )
-            updated += 1
-        except Exception as e:
-            failed.append({"task_id": task_id, "error": str(e)})
 
-    db.commit()
-    return BatchUpdateResponse(updated=updated, failed=failed)
+    return BatchUpdateResponse(updated=len(success), failed=failed)
 
 @router.patch("/{task_id}/status", response_model=TaskResponse)
 def update_task_status(task_id: str, request: TaskStatusUpdateRequest, db: Session = Depends(get_db)):
     """P5-05: 更新任务状态"""
-    try:
-        task = db.query(Task).filter(Task.id == task_id).first()
-        if not task:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
-        old_status = task.status
-        task.status = request.status
-        task.updated_at = db.commit()
+    try:
+        transition_task_status(
+            db, task, request.status,
+            reason=f"Status update: {task.status} → {request.status}",
+        )
         db.commit()
         db.refresh(task)
         return task.to_dict()
-    except HTTPException:
-        raise
     except Exception as e:
+        if "Invalid status transition" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "invalid_state_transition", "message": str(e)},
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{task_id}/assign", response_model=TaskResponse)
@@ -163,42 +144,20 @@ def block_task(task_id: str, request: BlockTaskRequest, db: Session = Depends(ge
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
     try:
-        from_state_str = task.status
-        from_state = TaskState.from_string(from_state_str)
-        to_state = TaskState.BLOCKED
-
-        if not TaskStateTransition.can_transition(from_state, to_state):
-            allowed = TaskStateTransition.get_allowed_transitions(from_state)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "invalid_state_transition",
-                    "from_state": from_state_str,
-                    "to_state": "blocked",
-                    "allowed": [s.value for s in allowed],
-                }
-            )
-
-        task.status = "blocked"
-        task.blocked_reason = request.reason
-        task.updated_at = db.commit()
-
-        db.execute(
-            task_activity_log.insert().values(
-                id=f"log-{uuid.uuid4().hex[:12]}",
-                task_id=str(task_id),
-                old_status=from_state_str,
-                new_status="blocked",
-                reason=request.reason,
-                timestamp=db.commit(),
-            )
+        transition_task_status(
+            db, task, "blocked",
+            reason=request.reason or "Blocked",
+            extra={"blocked_reason": request.reason},
         )
         db.commit()
         db.refresh(task)
         return task.to_dict()
-    except HTTPException:
-        raise
     except Exception as e:
+        if "Invalid status transition" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "invalid_state_transition", "message": str(e)},
+            )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.patch("/{task_id}/unblock", response_model=TaskResponse)
@@ -214,24 +173,17 @@ def unblock_task(task_id: str, request: UnblockTaskRequest, db: Session = Depend
             detail={"error": "Task is not blocked", "current_status": task.status}
         )
 
-    from_state_str = task.status
-    task.status = "todo"
-    task.blocked_reason = None
-    task.updated_at = db.commit()
-
-    db.execute(
-        task_activity_log.insert().values(
-            id=f"log-{uuid.uuid4().hex[:12]}",
-            task_id=str(task_id),
-            old_status=from_state_str,
-            new_status="todo",
+    try:
+        transition_task_status(
+            db, task, "todo",
             reason=request.reason or "Unblocked",
-            timestamp=db.commit(),
+            extra={"blocked_reason": None},
         )
-    )
-    db.commit()
-    db.refresh(task)
-    return task.to_dict()
+        db.commit()
+        db.refresh(task)
+        return task.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.get("/statuses", response_model=list[TaskStatusItem])
 def get_task_statuses():

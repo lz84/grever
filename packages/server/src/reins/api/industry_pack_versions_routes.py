@@ -8,12 +8,13 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from reins.common.database import get_db
+from models import IndustryPack, IndustryPackVersion
 
 router = APIRouter(prefix="/api/v1/industry-packs", tags=["industry-pack-versions"])
+
 
 # ─────────────────────────────────────────────────────────
 # B112-1: GET /{pack_id}/versions — 版本历史
@@ -28,53 +29,37 @@ async def list_pack_versions(
 ):
     """返回包的版本历史列表（支持分页）。"""
     # Verify pack exists
-    pack = db.execute(
-        text("SELECT id FROM industry_packs WHERE id = :id"),
-        {"id": pack_id}
-    ).fetchone()
+    pack = db.query(IndustryPack).filter(IndustryPack.id == pack_id).first()
     if not pack:
         raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
 
     # Count versions
-    total = db.execute(
-        text("SELECT COUNT(*) FROM industry_pack_versions WHERE pack_id = :pack_id"),
-        {"pack_id": pack_id}
-    ).scalar()
+    total = db.query(IndustryPackVersion).filter(
+        IndustryPackVersion.pack_id == pack_id
+    ).count()
 
     offset = (page - 1) * page_size
-    rows = db.execute(
-        text("""
-            SELECT id, pack_id, version, action, source_file, source_checksum,
-                   stats, imported_at, notes, created_at
-            FROM industry_pack_versions
-            WHERE pack_id = :pack_id
-            ORDER BY created_at DESC, id DESC
-            LIMIT :limit OFFSET :offset
-        """),
-        {"pack_id": pack_id, "limit": page_size, "offset": offset}
-    ).fetchall()
+    rows = db.query(IndustryPackVersion).filter(
+        IndustryPackVersion.pack_id == pack_id
+    ).order_by(
+        IndustryPackVersion.created_at.desc(),
+        IndustryPackVersion.id.desc(),
+    ).offset(offset).limit(page_size).all()
 
     items = []
     for row in rows:
         item = {
-            "id": row[0],
-            "pack_id": row[1],
-            "version": row[2],
-            "action": row[3],
-            "source_file": row[4],
-            "source_checksum": row[5],
-            "imported_at": row[7],
-            "notes": row[8],
-            "created_at": row[9],
+            "id": row.id,
+            "pack_id": row.pack_id,
+            "version": row.version,
+            "action": row.action,
+            "source_file": row.source_file,
+            "source_checksum": row.source_checksum,
+            "imported_at": row.imported_at,
+            "notes": row.notes,
+            "created_at": row.created_at,
+            "stats": row.to_dict()["stats"] if hasattr(row, 'to_dict') else None,
         }
-        # Parse stats JSON if present
-        if row[6]:
-            try:
-                item["stats"] = json.loads(row[6])
-            except (json.JSONDecodeError, TypeError):
-                item["stats"] = row[6]
-        else:
-            item["stats"] = None
         items.append(item)
 
     return {
@@ -116,10 +101,7 @@ async def upgrade_pack(
     - 更新包的版本号
     """
     # Verify pack exists
-    pack = db.execute(
-        text("SELECT * FROM industry_packs WHERE id = :id"),
-        {"id": pack_id}
-    ).fetchone()
+    pack = db.query(IndustryPack).filter(IndustryPack.id == pack_id).first()
     if not pack:
         raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
 
@@ -127,7 +109,7 @@ async def upgrade_pack(
     if not new_version:
         raise HTTPException(status_code=400, detail="new_version is required")
 
-    old_version = pack[3]  # version column
+    old_version = pack.version
     changes = body.get("changes", {})
     notes = body.get("notes", f"Upgraded from {old_version} to {new_version}")
     now = int(time.time())
@@ -136,70 +118,15 @@ async def upgrade_pack(
     modified = changes.get("modified", [])
     removed = changes.get("removed", [])
 
-    added_count = 0
-    modified_count = 0
-    removed_count = 0
-
-    # --- Added: insert new contents ---
-    for item in added:
-        content_type = item.get("content_type")
-        content_id = item.get("content_id")
-        if not content_type or not content_id:
-            continue
-        # Skip if already exists
-        existing = db.execute(
-            text("SELECT 1 FROM industry_pack_contents WHERE pack_id = :pack_id AND content_type = :ct AND content_id = :ci"),
-            {"pack_id": pack_id, "ct": content_type, "ci": content_id}
-        ).fetchone()
-        if not existing:
-            db.execute(
-                text("INSERT INTO industry_pack_contents (pack_id, content_type, content_id) VALUES (:pack_id, :ct, :ci)"),
-                {"pack_id": pack_id, "ct": content_type, "ci": content_id}
-            )
-            added_count += 1
-
-    # --- Modified: just count (content_id already exists) ---
-    for item in modified:
-        content_type = item.get("content_type")
-        content_id = item.get("content_id")
-        if not content_type or not content_id:
-            continue
-        existing = db.execute(
-            text("SELECT 1 FROM industry_pack_contents WHERE pack_id = :pack_id AND content_type = :ct AND content_id = :ci"),
-            {"pack_id": pack_id, "ct": content_type, "ci": content_id}
-        ).fetchone()
-        if existing:
-            modified_count += 1
-        else:
-            # Treat as added if it doesn't exist yet
-            db.execute(
-                text("INSERT INTO industry_pack_contents (pack_id, content_type, content_id) VALUES (:pack_id, :ct, :ci)"),
-                {"pack_id": pack_id, "ct": content_type, "ci": content_id}
-            )
-            modified_count += 1
-
-    # --- Removed: mark deprecated (add _deprecated entry, don't physically delete) ---
-    for item in removed:
-        content_type = item.get("content_type")
-        content_id = item.get("content_id")
-        if not content_type or not content_id:
-            continue
-        # Mark as deprecated by inserting a _deprecated prefixed entry
-        deprecated_id = f"_deprecated:{content_id}"
-        db.execute(
-            text("""
-                INSERT OR REPLACE INTO industry_pack_contents (pack_id, content_type, content_id)
-                VALUES (:pack_id, :ct, :ci)
-            """),
-            {"pack_id": pack_id, "ct": f"_deprecated:{content_type}", "ci": content_id}
-        )
-        removed_count += 1
+    # Note: industry_pack_contents is removed. Content tracking now relies on pack_id FKs in business tables.
+    # We still count the changes provided in the request for version history purposes.
+    added_count = len(added)
+    modified_count = len(modified)
+    removed_count = len(removed)
 
     # --- Update pack version ---
-    db.execute(
-        text("UPDATE industry_packs SET version = :version, updated_at = :now WHERE id = :id"),
-        {"version": new_version, "now": now, "id": pack_id}
-    )
+    pack.version = new_version
+    pack.updated_at = now
 
     # --- Record version history ---
     stats = json.dumps({
@@ -209,28 +136,23 @@ async def upgrade_pack(
     })
     version_id = f"ipv-{pack_id}-{new_version}"
     # Make unique if this version already exists
-    existing_ver = db.execute(
-        text("SELECT id FROM industry_pack_versions WHERE pack_id = :pack_id AND version = :version"),
-        {"pack_id": pack_id, "version": new_version}
-    ).fetchone()
+    existing_ver = db.query(IndustryPackVersion).filter(
+        IndustryPackVersion.pack_id == pack_id,
+        IndustryPackVersion.version == new_version,
+    ).first()
     if existing_ver:
         version_id = f"{version_id}-{uuid.uuid4().hex[:6]}"
 
-    db.execute(
-        text("""
-            INSERT INTO industry_pack_versions
-            (id, pack_id, version, action, stats, imported_at, notes, created_at)
-            VALUES (:id, :pack_id, :version, 'upgrade', :stats, :now, :notes, :now)
-        """),
-        {
-            "id": version_id,
-            "pack_id": pack_id,
-            "version": new_version,
-            "stats": stats,
-            "now": now,
-            "notes": notes,
-        }
-    )
+    db.add(IndustryPackVersion(
+        id=version_id,
+        pack_id=pack_id,
+        version=new_version,
+        action='upgrade',
+        stats=stats,
+        imported_at=now,
+        notes=notes,
+        created_at=now,
+    ))
 
     db.commit()
 
@@ -267,80 +189,54 @@ async def diff_packs(
     """
     # Verify both packs exist
     for pid in [pack_a, pack_b]:
-        pack = db.execute(
-            text("SELECT id, name, version FROM industry_packs WHERE id = :id"),
-            {"id": pid}
-        ).fetchone()
+        pack = db.query(IndustryPack).filter(IndustryPack.id == pid).first()
         if not pack:
             raise HTTPException(status_code=404, detail=f"Pack '{pid}' not found")
 
-    # Get contents of both packs
-    rows_a = db.execute(
-        text("SELECT content_type, content_id FROM industry_pack_contents WHERE pack_id = :pack_id"),
-        {"pack_id": pack_a}
-    ).fetchall()
+    # Get contents of both packs by querying business tables directly
+    from models import Skill, KnowledgeEntry, AgentScheme
 
-    rows_b = db.execute(
-        text("SELECT content_type, content_id FROM industry_pack_contents WHERE pack_id = :pack_id"),
-        {"pack_id": pack_b}
-    ).fetchall()
+    def get_pack_contents(pid):
+        skills = db.query(Skill.id, Skill.pack_id).filter(Skill.pack_id == pid).all()
+        knowledge = db.query(KnowledgeEntry.id, KnowledgeEntry.pack_id).filter(KnowledgeEntry.pack_id == pid).all()
+        agents = db.query(AgentScheme.id, AgentScheme.pack_id).filter(AgentScheme.pack_id == pid).all()
+        
+        contents = set()
+        for sid, _ in skills:
+            contents.add(("skill", sid))
+        for kid, _ in knowledge:
+            contents.add(("knowledge", kid))
+        for aid, _ in agents:
+            contents.add(("agent_scheme", aid))
+        return contents
 
-    contents_a = {(r[0], r[1]) for r in rows_a}
-    contents_b = {(r[0], r[1]) for r in rows_b}
+    contents_a = get_pack_contents(pack_a)
+    contents_b = get_pack_contents(pack_b)
 
     # Added in B (in B but not in A)
-    added = []
-    for ct, ci in contents_b - contents_a:
-        # Skip deprecated markers as "removed"
-        if not ct.startswith("_deprecated:"):
-            added.append({"content_type": ct, "content_id": ci})
+    added = [{"content_type": ct, "content_id": ci} for ct, ci in contents_b - contents_a]
 
     # Removed from A (in A but not in B)
-    removed = []
-    for ct, ci in contents_a - contents_b:
-        if not ct.startswith("_deprecated:"):
-            removed.append({"content_type": ct, "content_id": ci})
+    removed = [{"content_type": ct, "content_id": ci} for ct, ci in contents_a - contents_b]
 
-    # Modified: same content_id in both, but one has deprecated marker
-    # Check for content that exists as normal in one and deprecated in other
+    # Deprecated tracking removed along with industry_pack_contents table
     modified = []
-    normal_a = {(ct, ci) for ct, ci in contents_a if not ct.startswith("_deprecated:")}
-    deprecated_a = {(ct, ci) for ct, ci in contents_a if ct.startswith("_deprecated:")}
-    normal_b = {(ct, ci) for ct, ci in contents_b if not ct.startswith("_deprecated:")}
-    deprecated_b = {(ct, ci) for ct, ci in contents_b if ct.startswith("_deprecated:")}
 
-    # Extract content_ids from deprecated entries
-    dep_a_ids = {(ct.replace("_deprecated:", ""), ci) for ct, ci in deprecated_a}
-    dep_b_ids = {(ct.replace("_deprecated:", ""), ci) for ct, ci in deprecated_b}
-
-    # Deprecation status changed
-    for ct, ci in normal_a & dep_b_ids:
-        modified.append({
-            "content_type": ct,
-            "content_id": ci,
-            "change": "deprecated_in_b",
-        })
-    for ct, ci in normal_b & dep_a_ids:
-        modified.append({
-            "content_type": ct,
-            "content_id": ci,
-            "change": "deprecated_in_a",
-        })
+    pack_a_ver = db.query(IndustryPack).with_entities(IndustryPack.version).filter(
+        IndustryPack.id == pack_a
+    ).first()
+    pack_b_ver = db.query(IndustryPack).with_entities(IndustryPack.version).filter(
+        IndustryPack.id == pack_b
+    ).first()
 
     return {
         "pack_a": {
             "id": pack_a,
-            "version": db.execute(
-                text("SELECT version FROM industry_packs WHERE id = :id"),
-                {"id": pack_a}
-            ).fetchone()[0],
+            "version": pack_a_ver[0] if pack_a_ver else None,
         },
         "pack_b": {
             "id": pack_b,
-            "version": db.execute(
-                text("SELECT version FROM industry_packs WHERE id = :id"),
-                {"id": pack_b}
-            ).fetchone()[0],
+            "version": pack_b_ver[0] if pack_b_ver else None,
         },
         "added": added,
         "removed": removed,

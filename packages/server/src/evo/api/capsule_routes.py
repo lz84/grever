@@ -12,10 +12,10 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
+from sqlalchemy import func
 
-from reins.common.database import get_db_manager
-from persistence.tables import capsules as capsules_table
+from models import Capsule
+from reins.common.database import get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,6 @@ class CapsuleRow(BaseModel):
     content: Optional[str] = None
     diff: Optional[str] = None
     strategy: Optional[dict] = None
-    a2a: Optional[dict] = None
     created_at: Optional[str] = None
 
 
@@ -60,31 +59,31 @@ class CapsuleListResponse(BaseModel):
 # 辅助函数
 # ===========================================================================
 
-def _row_to_dict(row) -> dict:
-    """将 SQLAlchemy Row 转为 dict，自动解析 JSON 列和 DateTime"""
-    d = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-    # 解析 JSON 列
-    for json_col in ("trigger", "blast_radius", "outcome", "strategy", "a2a"):
-        val = d.get(json_col)
-        if isinstance(val, str):
+def _capsule_to_dict(capsule: Capsule) -> dict:
+    """将 Capsule ORM 对象转为 dict，自动解析 JSON 列"""
+    def _parse_json(value):
+        if isinstance(value, str):
             try:
-                d[json_col] = json.loads(val)
+                return json.loads(value)
             except (json.JSONDecodeError, TypeError):
-                d[json_col] = None
-        elif val is None:
-            d[json_col] = None
-    # 格式化 DateTime
-    for dt_col in ("created_at",):
-        val = d.get(dt_col)
-        if val is not None and not isinstance(val, str):
-            d[dt_col] = str(val)
-    return d
+                return None
+        return value
 
-
-def _select_all_columns():
-    """生成 SELECT 子句，列出所有列"""
-    cols = [c.name for c in capsules_table.c]
-    return ", ".join(cols)
+    return {
+        "id": capsule.id,
+        "schema_version": capsule.schema_version,
+        "trigger": _parse_json(capsule.trigger),
+        "gene_id": capsule.gene_id,
+        "summary": capsule.summary,
+        "confidence": capsule.confidence,
+        "blast_radius": _parse_json(capsule.blast_radius),
+        "outcome": _parse_json(capsule.outcome),
+        "success_streak": capsule.success_streak,
+        "content": capsule.content,
+        "diff": capsule.diff,
+        "strategy": _parse_json(capsule.strategy),
+        "created_at": capsule.created_at,
+    }
 
 
 # ===========================================================================
@@ -102,45 +101,45 @@ def list_capsules(
     if status and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}. Must be one of {VALID_STATUSES}")
 
-    where_clauses = []
-    params = {}
+    db = get_db_session()
+    try:
+        # Filter by gene_id first
+        query = db.query(Capsule)
+        count_query = db.query(Capsule)
 
-    if status:
-        # outcome 是 JSON 列，用 JSON 提取
-        where_clauses.append("json_extract(outcome, '$.status') = :status")
-        params["status"] = status
+        if gene_id:
+            query = query.filter(Capsule.gene_id == gene_id)
+            count_query = count_query.filter(Capsule.gene_id == gene_id)
 
-    if gene_id:
-        where_clauses.append("gene_id = :gene_id")
-        params["gene_id"] = gene_id
+        total = count_query.count()
 
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        offset = (page - 1) * page_size
+        rows = query.order_by(Capsule.created_at.desc()).offset(offset).limit(page_size).all()
 
-    cols = _select_all_columns()
+        # Filter by status (from JSON outcome column) in Python
+        items = []
+        for r in rows:
+            if status:
+                outcome = r.outcome
+                if isinstance(outcome, str):
+                    try:
+                        outcome = json.loads(outcome)
+                    except (json.JSONDecodeError, TypeError):
+                        outcome = {}
+                elif outcome is None:
+                    outcome = {}
+                if outcome.get("status") != status:
+                    continue
+            items.append(_capsule_to_dict(r))
 
-    db = get_db_manager()
-
-    # 总数查询
-    count_sql = f"SELECT COUNT(*) FROM capsules {where_sql}"
-    with db.engine.connect() as conn:
-        total = total = conn.execute(text(count_sql), params).scalar()
-
-    # 分页查询
-    offset = (page - 1) * page_size
-    data_sql = f"SELECT {cols} FROM capsules {where_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-    params["limit"] = page_size
-    params["offset"] = offset
-
-    with db.engine.connect() as conn:
-        rows = rows = conn.execute(text(data_sql), params).fetchall()
-    items = [_row_to_dict(r) for r in rows]
-
-    return CapsuleListResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-    )
+        return CapsuleListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -150,19 +149,16 @@ def list_capsules(
 @router.get("/{capsule_id}")
 def get_capsule(capsule_id: str):
     """查询单个 Capsule 详情，不存在则返回 404"""
-    cols = _select_all_columns()
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        row = db.query(Capsule).filter(Capsule.id == capsule_id).first()
 
-    with db.engine.connect() as conn:
-        row = row = conn.execute(
-        text(f"SELECT {cols} FROM capsules WHERE id = :id"),
-        {"id": capsule_id},
-        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
 
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
-
-    return _row_to_dict(row)
+        return _capsule_to_dict(row)
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -182,47 +178,42 @@ def promote_capsule(capsule_id: str, req: PromoteRequest):
             detail=f"Invalid promote status: {new_status}. Must be 'validated' or 'solidified'",
         )
 
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        # 先检查是否存在
+        row = db.query(Capsule).with_entities(
+            Capsule.id, Capsule.outcome
+        ).filter(Capsule.id == capsule_id).first()
 
-    # 先检查是否存在
-    with db.engine.connect() as conn:
-        row = row = conn.execute(
-        text("SELECT id, outcome FROM capsules WHERE id = :id"),
-        {"id": capsule_id},
-        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
 
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
+        # 更新 outcome.status
+        outcome = row[1] if row[1] else {}
+        if isinstance(outcome, str):
+            try:
+                outcome = json.loads(outcome)
+            except (json.JSONDecodeError, TypeError):
+                outcome = {}
 
-    # 更新 outcome.status
-    outcome = row.outcome if row.outcome else {}
-    if isinstance(outcome, str):
-        try:
-            outcome = json.loads(outcome)
-        except (json.JSONDecodeError, TypeError):
-            outcome = {}
+        outcome["status"] = new_status
+        outcome["updated_at"] = datetime.now().isoformat()
 
-    outcome["status"] = new_status
-    outcome["updated_at"] = datetime.now().isoformat()
+        db.query(Capsule).filter(Capsule.id == capsule_id).update({
+            "outcome": json.dumps(outcome, ensure_ascii=False),
+        })
+        db.commit()
 
-    with db.engine.connect() as conn:
-        conn.execute(
-        text("UPDATE capsules SET outcome = :outcome WHERE id = :id"),
-        {"outcome": json.dumps(outcome, ensure_ascii=False), "id": capsule_id},
-        )
-        conn.commit()
+        logger.info("Capsule %s promoted to %s", capsule_id, new_status)
 
-    logger.info("Capsule %s promoted to %s", capsule_id, new_status)
-
-    # 返回更新后的 Capsule
-    cols = _select_all_columns()
-    with db.engine.connect() as conn:
-        updated = updated = conn.execute(
-        text(f"SELECT {cols} FROM capsules WHERE id = :id"),
-        {"id": capsule_id},
-        ).fetchone()
-
-    return _row_to_dict(updated)
+        # 返回更新后的 Capsule
+        updated = db.query(Capsule).filter(Capsule.id == capsule_id).first()
+        return _capsule_to_dict(updated)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -235,44 +226,39 @@ def deprecate_capsule(capsule_id: str):
     标记 Capsule 为废弃。
     更新 outcome.status 为 "deprecated"。
     """
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        # 先检查是否存在
+        row = db.query(Capsule).with_entities(
+            Capsule.id, Capsule.outcome
+        ).filter(Capsule.id == capsule_id).first()
 
-    # 先检查是否存在
-    with db.engine.connect() as conn:
-        row = row = conn.execute(
-        text("SELECT id, outcome FROM capsules WHERE id = :id"),
-        {"id": capsule_id},
-        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
 
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Capsule not found: {capsule_id}")
+        # 更新 outcome.status
+        outcome = row[1] if row[1] else {}
+        if isinstance(outcome, str):
+            try:
+                outcome = json.loads(outcome)
+            except (json.JSONDecodeError, TypeError):
+                outcome = {}
 
-    # 更新 outcome.status
-    outcome = row.outcome if row.outcome else {}
-    if isinstance(outcome, str):
-        try:
-            outcome = json.loads(outcome)
-        except (json.JSONDecodeError, TypeError):
-            outcome = {}
+        outcome["status"] = "deprecated"
+        outcome["deprecated_at"] = datetime.now().isoformat()
 
-    outcome["status"] = "deprecated"
-    outcome["deprecated_at"] = datetime.now().isoformat()
+        db.query(Capsule).filter(Capsule.id == capsule_id).update({
+            "outcome": json.dumps(outcome, ensure_ascii=False),
+        })
+        db.commit()
 
-    with db.engine.connect() as conn:
-        conn.execute(
-        text("UPDATE capsules SET outcome = :outcome WHERE id = :id"),
-        {"outcome": json.dumps(outcome, ensure_ascii=False), "id": capsule_id},
-        )
-        conn.commit()
+        logger.info("Capsule %s deprecated", capsule_id)
 
-    logger.info("Capsule %s deprecated", capsule_id)
-
-    # 返回更新后的 Capsule
-    cols = _select_all_columns()
-    with db.engine.connect() as conn:
-        updated = updated = conn.execute(
-        text(f"SELECT {cols} FROM capsules WHERE id = :id"),
-        {"id": capsule_id},
-        ).fetchone()
-
-    return _row_to_dict(updated)
+        # 返回更新后的 Capsule
+        updated = db.query(Capsule).filter(Capsule.id == capsule_id).first()
+        return _capsule_to_dict(updated)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

@@ -112,10 +112,9 @@ export interface ConstraintHistory {
 }
 
 export interface GoalMode {
-  mode: 'normal' | 'exploration' | 'optimization'
-  optimization_target?: string
-  convergence_threshold?: number
-  max_rounds?: number
+  mode: 'engineering' | 'research'
+  diversity?: string
+  portfolio_size?: number
 }
 
 // ==================== Solutions API ====================

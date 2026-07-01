@@ -224,10 +224,10 @@ class DBConfig:
         # 环境变量优先级最高
         self.provider = _os.getenv("DB_PROVIDER", self.provider).lower()
         if self.provider == "sqlite":
-            # 动态解析项目路径，兼容 Windows/Linux
-            project_root = _Path(__file__).resolve().parents[5]  # src/shared/database/ → project root
-            default_db_path = project_root / "data" / "reins.db"
-            self.sqlite_path = _os.getenv("SQLITE_PATH", str(default_db_path))
+            # 强制要求 SQLITE_PATH 环境变量，不兜底推导路径（铁律3）
+            self.sqlite_path = _os.getenv("SQLITE_PATH")
+            if not self.sqlite_path:
+                raise ValueError("环境变量 SQLITE_PATH 未设置，无法确定数据库路径")
         else:
             self.host = _os.getenv("DB_HOST", self.host)
             self.port = int(_os.getenv("DB_PORT", str(self.port)))

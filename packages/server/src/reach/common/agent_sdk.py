@@ -1,5 +1,5 @@
 """
-Nexus Agent SDK - 智能体无缝注册到 Reins
+Grever Agent SDK - 智能体无缝注册到 Reins
 
 P9-03: Agent SDK 适配 - 现有 Agent 无缝注册到 Reins
 
@@ -87,7 +87,7 @@ class AgentRegistrationConfig:
 
 class AgentSDK:
     """
-    Nexus Agent SDK 客户端
+    Grever Agent SDK 客户端
     
     让现有 Agent（OpenClaw、Paperclip 等）无缝注册到 Reins Server。
     

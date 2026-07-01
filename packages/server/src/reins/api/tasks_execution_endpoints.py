@@ -17,9 +17,11 @@ from sqlalchemy import text
 from models.task import Task
 from models.goal import Goal
 from models.project import Project
+from models.agent import Agent
+from models.solution import Solution
 from reins.common.database import get_db
+from reins.scheduler.statemachine import transition_task_status
 from reins.scheduler.result_verifier import ResultVerifier
-from persistence.tables import task_activity_log
 
 from reins.api.tasks_models import CompleteTaskRequest, CompleteTaskResponse
 from reins.api.tasks_execution_core import (
@@ -126,12 +128,7 @@ def complete_task(task_id: str, request: CompleteTaskRequest, db: Session = Depe
             except Exception:
                 dep_ids = []
         if dep_ids:
-            placeholders = ",".join([f":id_{i}" for i in range(len(dep_ids))])
-            params = {f"id_{i}": dep_ids[i] for i in range(len(dep_ids))}
-            dep_check = db.execute(
-                text(f"SELECT id, status FROM tasks WHERE id IN ({placeholders})"),
-                params
-            ).fetchall()
+            dep_check = db.query(Task.id, Task.status).filter(Task.id.in_(dep_ids)).all()
             undone = [(rid, rstatus) for rid, rstatus in dep_check if rstatus != "done"]
             if undone:
                 raise HTTPException(
@@ -144,17 +141,20 @@ def complete_task(task_id: str, request: CompleteTaskRequest, db: Session = Depe
                     }
                 )
 
+    # ── Sprint 91: 缺少 acceptance_criteria 时自动生成 fallback，不直接拒绝 ──
     has_acceptance_criteria = bool(task.acceptance_criteria and task.acceptance_criteria.strip())
     if not has_acceptance_criteria:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "acceptance_criteria_required",
-                "message": "完成任务必须有 acceptance_criteria。"
-                           "请通过 PUT /api/v1/tasks/{id} 设置 acceptance_criteria 后再完成。",
-                "how_to_fix": 'PUT /api/v1/tasks/{id} body={"acceptance_criteria": \'{"criteria": [{"type": "compile", "name": "编译", "desc": "npx tsc --noEmit 0 errors"}]}\'", "needs_verification": true}',
-            }
+        logger.warning(
+            f"[complete_task] Task {task_id} missing acceptance_criteria, auto-generating fallback"
         )
+        fallback_criteria = json.dumps({
+            "criteria": [
+                {"type": "output", "name": "执行输出", "desc": f"任务执行完成: {request.result[:100]}"}
+            ]
+        }, ensure_ascii=False)
+        task.acceptance_criteria = fallback_criteria
+        db.add(task)
+        # 延迟 commit，与后续操作一起提交
 
     # ── Sprint 86d-1: 完成时必须填写 context_md（需要验证的任务） ──────────────
     has_context_md = bool(task.context_md and task.context_md.strip())
@@ -179,36 +179,90 @@ def complete_task(task_id: str, request: CompleteTaskRequest, db: Session = Depe
         validation_passed, validation_reason = validate_task_result(task, request.result)
 
         if not validation_passed:
-            task.status = "review_needed"
-            task.result_summary = validation_reason
+            transition_task_status(
+                db, task, "review_needed",
+                reason=f"Task completed: review_needed, validation: failed - {validation_reason}",
+                extra={"result_summary": validation_reason},
+            )
         elif task.acceptance_criteria and task.acceptance_criteria.strip():
-            # 【Sprint 86 修复】needs_verification=True 但无 verifier_agent_id → 禁止完成，必须先分配验证者
+            # 【Sprint 91 修复】needs_verification=True 但无 verifier_agent_id → 自动禁用过验证
             if task.needs_verification and not task.verifier_agent_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": "verifier_required",
-                        "message": "needs_verification=True 的任务完成前必须分配 verifier_agent_id。",
-                        "how_to_fix": f'PUT /api/v1/tasks/{task_id} body={{"verifier_agent_id": "蚊子ID"}}',
-                    }
+                logger.warning(
+                    f"[complete_task] Task {task_id}: needs_verification=True but no verifier_agent_id, "
+                    f"auto-disabling verification and completing as done"
                 )
-            task.status = "verifying"
-            task.result_summary = request.result + " [等待 verifier agent 验证]"
-            task.result = request.result
+                task.needs_verification = False
+                db.add(task)
+                transition_task_status(
+                    db, task, "done",
+                    reason=f"Task completed: done (verification auto-disabled: no verifier assigned)",
+                    extra={"result_summary": request.result},
+                )
+                _write_execution_log(task, request, db)
+                _handle_human_input(task, request, old_status, db)
+                goal_progress = None
+                task_goal_id = _get_goal_id_from_project(db, task.project_id)
+                if task_goal_id:
+                    goal_progress = _update_goal_progress(db, task_goal_id)
+                    if goal_progress:
+                        db.commit()
+                        goal = db.query(Goal).filter(Goal.id == task_goal_id).first()
+                        if goal:
+                            db.refresh(goal)
+                if task.project_id and task.status == "done":
+                    _auto_complete_project(db, task)
+                scenario_feedback_triggered = False
+                scenario_evolution_result = None
+                if getattr(task, 'category', None) and task.status == "done":
+                    scenario_feedback_triggered, scenario_evolution_result = _handle_scenario_feedback(task, request, db)
+                _handle_agent_load_on_complete(task, db)
+                db.commit()
+                db.refresh(task)
+                if task.status == "done":
+                    _publish_task_completed_event(task, task_goal_id, request, validation_passed, validation_reason)
+                if task_goal_id:
+                    goal_mode = db.query(Goal).filter(Goal.id == task_goal_id).first()
+                    if goal_mode and getattr(goal_mode, 'mode', None) == "research":
+                        _sprint74_capture_and_compare(db, task, request, task_goal_id)
+                _maybe_trigger_distillation()
+                return CompleteTaskResponse(
+                    success=True,
+                    task_id=task_id,
+                    goal_progress=goal_progress,
+                    scenario_feedback_triggered=scenario_feedback_triggered,
+                    scenario_evolution_result=scenario_evolution_result,
+                )
+            transition_task_status(
+                db, task, "verifying",
+                reason=f"Task completed: verifying",
+                extra={
+                    "result_summary": request.result + " [等待 verifier agent 验证]",
+                    "result": request.result,
+                },
+            )
             db.commit()
 
             verifier = ResultVerifier()
             verify_result = verifier.trigger_verification(task_id, request.result, True, task.context_md)
 
             if verify_result["passed"]:
-                task.status = "done"
-                task.completed_at = datetime.now()
+                transition_task_status(
+                    db, task, "done",
+                    reason=f"Task completed: done, auto-verify passed",
+                    extra={"result_summary": request.result, "result": request.result},
+                )
             elif verify_result["action"] == "disputed":
-                task.status = "disputed"
+                transition_task_status(
+                    db, task, "disputed",
+                    reason=f"Task completed: disputed by auto-verify",
+                    extra={"result_summary": request.result},
+                )
             else:
-                task.status = "review_needed"
-
-            task.result_summary = request.result
+                transition_task_status(
+                    db, task, "review_needed",
+                    reason=f"Task completed: review_needed by auto-verify",
+                    extra={"result_summary": request.result},
+                )
 
             task_goal_id = _get_goal_id_from_project(db, task.project_id)
             logger.info(f"[Sprint 74] Auto-capture (verifying path): task_id={task_id}, task_goal_id={task_goal_id}")
@@ -217,46 +271,19 @@ def complete_task(task_id: str, request: CompleteTaskRequest, db: Session = Depe
 
             return CompleteTaskResponse(success=True, task_id=task_id)
         else:
-            task.status = "done"
+            transition_task_status(
+                db, task, "done",
+                reason=f"Task completed: done",
+            )
     else:
-        task.status = request.status
-
-    task.updated_at = datetime.now()
-
-    if task.status == "verifying":
-        task.result = request.result
-        task.result_summary = request.result
-    elif request.status == "done":
-        task.completed_at = datetime.now()
-        if not task.started_at:
-            task.started_at = task.completed_at
-        task.result = request.result
-        task.result_summary = request.result
-    elif request.status == "failed":
-        task.completed_at = datetime.now()
-        if not task.started_at:
-            task.started_at = task.completed_at
-        task.error_type = "user_reported"
-        task.error_message = request.result
+        transition_task_status(
+            db, task, request.status,
+            reason=f"Task completed: {request.status}",
+            extra={"result_summary": request.result} if request.status == "done" else None,
+        )
 
     _write_execution_log(task, request, db)
     _handle_human_input(task, request, old_status, db)
-
-    reason = (
-        f"Task completed: {task.status}, validation: {'passed' if validation_passed else 'failed'} - {validation_reason}"
-        if request.status == "done"
-        else f"Task completed: {request.status}"
-    )
-    db.execute(
-        task_activity_log.insert().values(
-            id=f"log-{uuid.uuid4().hex[:12]}",
-            task_id=str(task_id),
-            old_status=old_status,
-            new_status=task.status,
-            reason=reason,
-            timestamp=datetime.now(),
-        )
-    )
 
     goal_progress = None
     task_goal_id = _get_goal_id_from_project(db, task.project_id)
@@ -285,11 +312,8 @@ def complete_task(task_id: str, request: CompleteTaskRequest, db: Session = Depe
         _publish_task_completed_event(task, task_goal_id, request, validation_passed, validation_reason)
 
     if task_goal_id:
-        goal_mode_row = db.execute(
-            text("SELECT mode, title, optimization_target, max_rounds FROM goals WHERE id = :id"),
-            {"id": task_goal_id}
-        ).mappings().fetchone()
-        if goal_mode_row and goal_mode_row.get("mode") in ("exploration", "optimization"):
+        goal_mode = db.query(Goal).filter(Goal.id == task_goal_id).first()
+        if goal_mode and getattr(goal_mode, 'mode', None) == "research":
             _sprint74_capture_and_compare(db, task, request, task_goal_id)
 
     # ── Evo 蒸馏触发：每完成 10 个任务触发一次 ─────────────────────

@@ -1,5 +1,5 @@
 """
-Nexus 后台任务（P5-05, P5-07）
+Grever 后台任务（P5-05, P5-07）
 
 包含：
 - HeartbeatOfflineDetector: 后台心跳检测，标记离线 Agent
@@ -303,12 +303,10 @@ class SseDisconnectDetector:
 
         # 更新 DB 中的 trigger_mode
         try:
-            from sqlalchemy import text
-            with self._db_manager.engine.begin() as conn:
-                conn.execute(
-                    text("UPDATE agents SET trigger_mode='polling' WHERE id=:id"),
-                    {"id": agent_id}
-                )
+            from models import Agent
+            session = self._db_manager.get_session()
+            session.query(Agent).filter(Agent.id == agent_id).update({"trigger_mode": "polling"})
+            session.commit()
         except Exception as e:
             logger.warning(f"[SseDisconnectDetector] DB update failed: {e}")
 
@@ -345,12 +343,10 @@ class SseDisconnectDetector:
 
                 # 更新 DB
                 try:
-                    from sqlalchemy import text
-                    with self._db_manager.engine.begin() as conn:
-                        conn.execute(
-                            text("UPDATE agents SET trigger_mode='sse' WHERE id=:id"),
-                            {"id": agent_id}
-                        )
+                    from models import Agent
+                    session = self._db_manager.get_session()
+                    session.query(Agent).filter(Agent.id == agent_id).update({"trigger_mode": "sse"})
+                    session.commit()
                 except Exception as e:
                     logger.warning(f"[SseDisconnectDetector] DB update failed: {e}")
 
@@ -426,11 +422,11 @@ class TaskTimeoutDetector:
         from sqlalchemy import text
         import uuid
 
-        cutoff = datetime.now() - timedelta(minutes=self._timeout_minutes)
+        cutoff_ts = int((datetime.now() - timedelta(minutes=self._timeout_minutes)).timestamp())
 
         try:
             with self._db_manager.engine.begin() as conn:
-                # 查找超时任务
+                # 查找超时任务（started_at 是 int Unix timestamp，cutoff 也必须是 int）
                 query = text("""
                     SELECT id, title, assigned_agent, started_at
                     FROM tasks
@@ -438,7 +434,7 @@ class TaskTimeoutDetector:
                       AND started_at IS NOT NULL
                       AND started_at < :cutoff
                 """)
-                timeout_tasks = conn.execute(query, {"cutoff": cutoff}).fetchall()
+                timeout_tasks = conn.execute(query, {"cutoff": cutoff_ts}).fetchall()
 
             if not timeout_tasks:
                 return
@@ -525,7 +521,7 @@ class TaskTimeoutDetector:
         import uuid
 
         timeout_minutes = timeout_minutes or self._timeout_minutes
-        cutoff = datetime.now() - timedelta(minutes=timeout_minutes)
+        cutoff_ts = int((datetime.now() - timedelta(minutes=timeout_minutes)).timestamp())
 
         try:
             with self._db_manager.engine.begin() as conn:
@@ -536,7 +532,7 @@ class TaskTimeoutDetector:
                       AND started_at IS NOT NULL
                       AND started_at < :cutoff
                 """)
-                timeout_tasks = conn.execute(query, {"cutoff": cutoff}).fetchall()
+                timeout_tasks = conn.execute(query, {"cutoff": cutoff_ts}).fetchall()
 
             if not timeout_tasks:
                 return {"recovered_count": 0, "task_ids": []}

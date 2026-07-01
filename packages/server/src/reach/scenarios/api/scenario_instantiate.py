@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from reins.common.database import get_db_manager
 from sqlalchemy import text
+from reach.scenarios.api._scen_instantiate_helpers import _evaluate_condition_preview, _determine_executor_behavior, _build_context_md, _create_hitl_request, _resolve_industry_dimension, _should_create_task
 from .scenario_models import InstantiateWorkflowRequest, InstantiateWorkflowResponse, _parse_json
 
 router = APIRouter(tags=["scenario-instantiate"])
@@ -179,7 +180,7 @@ def preview_scenario(scenario_id: str):
 
         # 获取所有场景任务模板
         tasks_raw = conn.execute(text("""
-            SELECT id, name, description, phase_name, agent_type, required_capabilities,
+            SELECT id, name, description, phase_name, required_capabilities,
                    dependencies, condition_type, condition_data, order_in_phase
             FROM scenario_tasks
             WHERE scenario_id = :sid
@@ -208,7 +209,7 @@ def preview_scenario(scenario_id: str):
             preview_tasks: List[PreviewTaskItem] = []
 
             for t in phase_tasks:
-                t_id, t_name, t_desc, t_phase, t_agent, t_caps, t_deps, t_condition, t_cond_data, t_order = t
+                t_id, t_name, t_desc, t_phase, t_caps, t_deps, t_condition, t_cond_data, t_order = t
 
                 # 复用条件判断逻辑
                 should_create = _evaluate_condition_preview(t_condition, t_cond_data)
@@ -222,7 +223,6 @@ def preview_scenario(scenario_id: str):
 
                 preview_tasks.append(PreviewTaskItem(
                     name=t_name,
-                    agent_type=t_agent or None,
                     required_capabilities=req_caps,
                 ))
 
@@ -258,128 +258,6 @@ def preview_scenario(scenario_id: str):
         tasks_count=total_tasks,
         projects=preview_projects,
     )
-
-def _evaluate_condition_preview(condition_type: Optional[str], condition_data: Optional[str]) -> bool:
-    """与 scenario_instantiate_v2._evaluate_condition 相同的逻辑，用于预览。"""
-    if not condition_type or condition_type == 'none':
-        return True
-    if condition_type == 'auto_eval':
-        return True
-    # human_decision / human_input → 不创建
-    return False
-
-
-# === Instantiate v2 (merged from scenario_instantiate_v2.py) ===
-"""
-场景实例化：从场景蓝图创建 Goal → Projects → Tasks
-
-流程：
-1. Goal 设置 scenario_id
-2. 调用 instantiate_scenario(goal_id)
-3. 遍历 scenario_projects → 创建 projects
-4. 遍历 scenario_tasks → 创建 tasks
-5. 按 executor_type 决定 task 状态：
-   - ai / auto_eval / ai_confirm → todo（无 HITL request）
-   - human / ai_approval / ai_data → paused + 创建 human_input_request
-6. 幂等保护：重复实例化不重复创建 HITL request
-
-Sprint 89: 增加 executor_type 六值体系 + human_input_request 创建
-Sprint 88: 保留 context_md 填充、required_capabilities 流入等
-"""
-from loguru import logger
-import json
-import uuid
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
-from sqlalchemy import text
-
-# ── executor_type → 是否需要 HITL request ───────────────────────────
-EXECUTOR_REQUIRES_HITL = frozenset({'human', 'ai_approval', 'ai_data'})
-
-# executor_type → input_type 映射
-EXECUTOR_TO_INPUT_TYPE = {
-    'human': 'data_entry',
-    'ai_approval': 'approval',
-    'ai_data': 'data_entry',
-}
-
-def _determine_executor_behavior(executor_type: Optional[str]) -> Tuple[str, bool]:
-    """
-    根据 executor_type 返回 (task_status, needs_hitl_request)。
-
-    - ai / auto_eval / ai_confirm → ('todo', False)
-    - human / ai_approval / ai_data → ('paused', True)
-    - 未知值 → ('todo', False)  （安全降级）
-    """
-    if not executor_type or executor_type == 'ai':
-        return ('todo', False)
-    if executor_type in EXECUTOR_REQUIRES_HITL:
-        return ('waiting_human', True)
-    # auto_eval / ai_confirm / 其他未知值 → todo，无需 HITL
-    return ('todo', False)
-
-def _build_context_md(scenario_id: str, scenario_name: str,
-                      phase_name: str, task_name: str, project_id: str) -> str:
-    """构建三级上下文文档（Sprint 88 保留）"""
-    ctx = {
-        "scenario_id": scenario_id,
-        "scenario_name": scenario_name,
-        "phase": phase_name,
-        "task": task_name,
-        "project_id": project_id,
-    }
-    return json.dumps(ctx, ensure_ascii=False)
-
-def _create_hitl_request(conn, task_id: str, goal_id: str, project_id: str,
-                         task_name: str, task_desc: Optional[str],
-                         executor_type: str, scenario_id: str,
-                         scenario_name: str) -> bool:
-    """
-    幂等创建 human_input_request。
-    若该 task 已有 pending 的 HITL request，跳过。
-    返回 True 表示新创建，False 表示已存在。
-    """
-    existing = conn.execute(text("""
-        SELECT id FROM human_input_requests
-        WHERE task_id = :tid AND status = 'pending'
-    """), {"tid": task_id}).fetchone()
-
-    if existing:
-        logger.info("[HITL] request already exists for task %s, skipping", task_id)
-        return False
-
-    input_type = EXECUTOR_TO_INPUT_TYPE.get(executor_type, 'data_entry')
-    request_id = f"hir-{uuid.uuid4().hex[:12]}"
-    title = f"人工介入: {task_name}"
-
-    if executor_type == 'ai_approval':
-        description = f"请审批任务「{task_name}」的执行结果。场景: {scenario_name}"
-    elif executor_type == 'ai_data':
-        description = f"请为任务「{task_name}」提供必要数据。场景: {scenario_name}"
-    else:
-        description = f"任务「{task_name}」需要人工介入。场景: {scenario_name}"
-
-    conn.execute(text("""
-        INSERT INTO human_input_requests
-            (id, task_id, goal_id, project_id, title, description, input_type,
-             status, scenario_ref, created_at, updated_at)
-        VALUES (:id, :tid, :gid, :pid, :title, :desc, :itype,
-                'pending', :sref, :now, :now)
-    """), {
-        "id": request_id,
-        "tid": task_id,
-        "gid": goal_id,
-        "pid": project_id,
-        "title": title,
-        "desc": description or f"任务「{task_name}」需要人工介入",
-        "itype": input_type,
-        "sref": scenario_id,
-        "now": datetime.now(),
-    })
-
-    logger.info("[HITL] created request %s for task %s (type=%s)",
-                request_id, task_id, executor_type)
-    return True
 
 def instantiate_scenario(goal_id: str, scenario_id: str, db_manager) -> Dict[str, Any]:
     """
@@ -430,9 +308,9 @@ def instantiate_scenario(goal_id: str, scenario_id: str, db_manager) -> Dict[str
             ORDER BY MIN(order_in_phase) ASC
         """), {"sid": scenario_id}).fetchall()
 
-        # 3. 获取所有场景任务模板（含 executor_type）
+        # 3. 获取所有场景任务模板（不含 agent_type）
         tasks_raw = conn.execute(text("""
-            SELECT id, name, description, phase_name, agent_type, required_capabilities,
+            SELECT id, name, description, phase_name, required_capabilities,
                    dependencies, condition_type, condition_data, order_in_phase,
                    executor_type
             FROM scenario_tasks
@@ -462,7 +340,7 @@ def instantiate_scenario(goal_id: str, scenario_id: str, db_manager) -> Dict[str
             # 合并 required_capabilities → project capability_tags（按 dimension 分组）
             proj_all_caps = []
             for pt in phase_tasks:
-                pt_caps_raw = pt[5]
+                pt_caps_raw = pt[4]
                 if pt_caps_raw:
                     caps = json.loads(pt_caps_raw) if isinstance(pt_caps_raw, str) else pt_caps_raw
                     for cap in caps:
@@ -505,18 +383,16 @@ def instantiate_scenario(goal_id: str, scenario_id: str, db_manager) -> Dict[str
             task_name_to_id: Dict[str, str] = {}
 
             for t in phase_tasks:
-                # t: (id, name, description, phase_name, agent_type,
-                #     required_capabilities, dependencies, condition_type,
-                #     condition_data, order_in_phase, executor_type)
+                # t: (id, name, description, phase_name, required_capabilities,
+                #     dependencies, condition_type, condition_data, order_in_phase, executor_type)
                 t_id = t[0]
                 t_name = t[1]
                 t_desc = t[2]
-                t_agent = t[4]
-                t_caps = t[5]
-                t_deps = t[6]
-                t_condition = t[7]
-                t_cond_data = t[8]
-                t_executor_type = t[10] if len(t) > 10 else 'ai'
+                t_caps = t[4]
+                t_deps = t[5]
+                t_condition = t[6]
+                t_cond_data = t[7]
+                t_executor_type = t[9] if len(t) > 9 else 'ai'
 
                 # 条件评估（condition_type 优先级高于 executor_type）
                 if not _should_create_task(t_condition, t_cond_data):
@@ -570,7 +446,7 @@ def instantiate_scenario(goal_id: str, scenario_id: str, db_manager) -> Dict[str
                     "goal_id": goal_id,
                     "status": task_status,
                     "deps": json.dumps(actual_deps) if actual_deps else "[]",
-                    "assignee": t_agent or "",
+                    "assignee": "",
                     "now": now,
                     "ctags": json.dumps(task_capability_tags),
                     "context_md": context_md,

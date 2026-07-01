@@ -227,10 +227,10 @@ _TaskCreateBase, _TaskUpdateBase, TaskResponseBase = auto_schema(
 TaskCreate = create_model(
     'TaskCreate',
     __base__=_TaskCreateBase,
-    depends_on=(TypingList[TypingAny], ...),  # Required: DAG 依赖顺序
-    capability_tags=(dict, ...),  # Required: 四维标签，匹配引擎输入
+    depends_on=(Optional[TypingList[TypingAny]], None),  # Optional: DAG 依赖顺序，默认由后端处理
+    capability_tags=(Optional[dict], None),  # Optional: 四维标签，后端从 Project 继承或使用默认值
     context_md=(Optional[str], None),  # Sprint 86: 三级上下文文档
-    strict_mode=(bool, True),  # Sprint 98: True=缺失前置阻断, False=自动补全
+    strict_mode=(Optional[bool], True),  # Sprint 98: True=缺失前置阻断, False=自动补全
 )
 
 TaskUpdate = create_model(

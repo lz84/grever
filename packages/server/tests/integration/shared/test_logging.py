@@ -152,7 +152,7 @@ class TestLogQuery:
     def test_query_with_log_file(self, tmp_path):
         """测试从 JSON 日志文件查询"""
         # 写入测试日志
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         entries = [
             json.dumps({
                 'extra': {'module': 'scheduler', 'event_type': 'task_assigned', 'trace_id': 't1'},
@@ -194,7 +194,7 @@ class TestLogQuery:
 
     def test_query_pagination(self, tmp_path):
         """测试分页查询"""
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         entries = []
         for i in range(10):
             entries.append(json.dumps({
@@ -213,7 +213,7 @@ class TestLogQuery:
 
     def test_query_by_trace(self, tmp_path):
         """测试按 trace_id 查询"""
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         entries = [
             json.dumps({'extra': {'module': 'test', 'event_type': 'e1', 'trace_id': 'my-trace'}, 'record': {'level': {'name': 'info'}}}),
             json.dumps({'extra': {'module': 'test', 'event_type': 'e2', 'trace_id': 'my-trace'}, 'record': {'level': {'name': 'info'}}}),
@@ -228,7 +228,7 @@ class TestLogQuery:
 
     def test_query_errors(self, tmp_path):
         """测试错误日志查询"""
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         entries = [
             json.dumps({'extra': {'module': 'test', 'event_type': 'e1', 'trace_id': 't1'}, 'record': {'level': {'name': 'info'}}}),
             json.dumps({'extra': {'module': 'test', 'event_type': 'e2', 'trace_id': 't2'}, 'record': {'level': {'name': 'error'}}}),
@@ -243,7 +243,7 @@ class TestLogQuery:
 
     def test_query_malformed_lines(self, tmp_path):
         """测试处理格式错误的日志行"""
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         with open(log_file, 'w') as f:
             f.write('not valid json\n')
             f.write('{"extra": {"module": "test", "event_type": "e1", "trace_id": "t1"}, "record": {"level": {"name": "info"}}}\n')
@@ -255,7 +255,7 @@ class TestLogQuery:
 
     def test_get_stats_with_file(self, tmp_path):
         """测试有日志文件时的统计"""
-        log_file = tmp_path / 'nexus-json.log'
+        log_file = tmp_path / 'grever-json.log'
         with open(log_file, 'w') as f:
             f.write('{"extra": {}, "record": {}}\n')
             f.write('{"extra": {}, "record": {}}\n')

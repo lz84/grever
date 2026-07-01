@@ -12,16 +12,19 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import insert
 
 from models.task import Task
 from models.goal import Goal
 from models.project import Project
 from models.scenario import Scenario
+from models import ExecutionLog, TaskActivityLog, Solution
 from persistence.tables import task_activity_log, execution_logs
+from reins.scheduler.statemachine import TaskStateMachine
 from reins.common.event_bus import WorkflowEvent, get_event_bus
 from reins.scheduler.assigner.agent_registry import AgentRegistry
-from reins.scheduler.result_verifier import ResultVerifier
+from sins.scheduler.result_verifier import ResultVerifier
+from reins.scheduler.statemachine import ProjectStateMachine
 
 from reins.api.tasks_helpers import (
     _get_goal_id_from_project,
@@ -31,28 +34,29 @@ from reins.api.tasks_helpers import (
     _evaluate_scenario_evolution,
 )
 
+
 def _write_execution_log(task, request, db):
     """Write execution_logs for task_complete."""
     try:
-        db.execute(
-            execution_logs.insert().values(
-                id=str(uuid.uuid4()),
-                task_id=str(task.id),
-                agent_id=task.assigned_agent or 'unknown',
-                action='task_complete',
-                input=json.dumps(request.execution_log or {}),
-                output=json.dumps(request.output or {}),
-                status='success',
-                duration_ms=request.duration_ms or 0,
-                created_at=datetime.now(),
-                error_message='',
-                result_summary=str(request.result)[:1000] if request.result else '',
-                metadata=json.dumps({"source": "task_complete_endpoint", "validation_passed": True}),
-                connectivity_verified=True,
-            )
-        )
+        db.add(ExecutionLog(
+            id=str(uuid.uuid4()),
+            task_id=str(task.id),
+            agent_id=task.assigned_agent or 'unknown',
+            action='task_complete',
+            input=json.dumps(request.execution_log or {}),
+            output=json.dumps(request.output or {}),
+            status='success',
+            duration_ms=request.duration_ms or 0,
+            created_at=datetime.utcnow(),
+            error_message='',
+            result_summary=str(request.result)[:1000] if request.result else '',
+            metadata=json.dumps({"source": "task_complete_endpoint", "validation_passed": True}),
+            connectivity_verified=True,
+        ))
+        db.commit()
     except Exception as e:
         logger.warning(f"[P1-01] execution_logs task_complete warning: {e}")
+
 
 def _handle_human_input(task, request, old_status, db):
     """Detect human input needs and create request + notify."""
@@ -61,19 +65,11 @@ def _handle_human_input(task, request, old_status, db):
     if human_input_data and human_input_data.get("needs_human_input"):
         human_input_request = _create_human_input_request(task.id, human_input_data, db)
         if human_input_request:
-            task.status = "waiting_human"
-            task.updated_at = datetime.now()
-
-            db.execute(
-                task_activity_log.insert().values(
-                    id=f"log-{uuid.uuid4().hex[:12]}",
-                    task_id=str(task.id),
-                    old_status=old_status,
-                    new_status="waiting_human",
-                    reason=f"Waiting for human input: {human_input_request.title}",
-                    timestamp=datetime.now(),
-                )
+            TaskStateMachine(db, task.id).transition(
+                "waiting_human",
+                reason=f"Waiting for human input: {human_input_request.title}",
             )
+            db.commit()
 
             logger.info(f"[T2] Task {task.id} set to 'waiting_human' status due to human input requirement")
 
@@ -93,6 +89,7 @@ def _handle_human_input(task, request, old_status, db):
                 logger.info(f"[T2] 飞书通知服务未安装,跳过通知 for task {task.id}")
             except Exception as e:
                 logger.info(f"[T2] 发送飞书通知时发生错误: {e}")
+
 
 def _handle_scenario_feedback(task, request, db):
     """Trigger scenario library feedback and evolution."""
@@ -155,7 +152,7 @@ def _handle_scenario_feedback(task, request, db):
                         exec_log = []
 
                     exec_log.append({
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.utcnow().isoformat(),
                         "status": task.status,
                         "duration_ms": new_duration,
                         "success": task.status == "done",
@@ -166,65 +163,68 @@ def _handle_scenario_feedback(task, request, db):
                     scenario_evolution_result = evolution_result
 
                     scenario_feedback_triggered = True
+                    db.commit()
         except Exception as e:
             logger.warning(f"[MAK-215] Scenario feedback warning: {e}")
 
     return scenario_feedback_triggered, scenario_evolution_result
+
 
 def _handle_agent_load_on_complete(task, db):
     """Update agent load after task completion."""
     if task.assigned_agent:
         try:
             agent_registry = AgentRegistry()
-            current_tasks_query = text("""
-                SELECT
-                    (SELECT current_tasks FROM agents WHERE id = :agent_id) - 1 AS new_current_tasks,
-                    (SELECT max_concurrent_tasks FROM agents WHERE id = :agent_id) AS max_concurrent_tasks
-            """)
-            result = db.execute(current_tasks_query, {"agent_id": task.assigned_agent}).fetchone()
-            if result:
-                new_current_tasks = max(0, result[0]) if result[0] else 0
-                max_concurrent_tasks = result[1] if result[1] else 5
-                agent_registry.update_load_withCalculation(
-                    agent_id=task.assigned_agent,
-                    current_tasks=new_current_tasks,
-                )
+            # Get current tasks for this agent
+            agent = db.query(Task).with_entities(Task.assigned_agent).filter(
+                Task.assigned_agent == task.assigned_agent
+            ).first()
+            # Use the registry's built-in method
+            agent_registry.update_load_withCalculation(
+                agent_id=task.assigned_agent,
+            )
         except Exception as e:
             logger.warning(f"[MAK-232] Task completion load update warning: {e}")
 
+
 def _auto_complete_project(db, task):
     """Auto-complete project when all tasks are done, and activate next draft project."""
-    from sqlalchemy import text as sa_text
     project = db.query(Project).filter(Project.id == task.project_id).first()
     if project and project.status not in ("completed", "on_hold"):
         total = db.query(Task).filter(Task.project_id == task.project_id).count()
         done = db.query(Task).filter(Task.project_id == task.project_id, Task.status == "done").count()
         if total > 0 and total == done:
-            project.status = "completed"
-            project.updated_at = datetime.now()
-            db.execute(
-                task_activity_log.insert().values(
-                    id=f"log-{uuid.uuid4().hex[:12]}",
-                    task_id=None,
-                    old_status="active",
-                    new_status="completed",
-                    reason=f"项目自动完成:所有 {total} 个任务均已完成",
-                    timestamp=datetime.now(),
-                )
-            )
+            # 使用 ProjectStateMachine 迁移状态
+            fsm = ProjectStateMachine(db, project.id)
+            fsm.transition("completed", reason=f"所有 {total} 个任务均已完成")
+            
+            project.updated_at = datetime.utcnow()
+            db.add(TaskActivityLog(
+                id=f"log-{uuid.uuid4().hex[:12]}",
+                task_id=None,
+                old_status="active",
+                new_status="completed",
+                reason=f"项目自动完成:所有 {total} 个任务均已完成",
+                timestamp=datetime.utcnow(),
+            ))
             db.flush()
 
             # 【Sprint 89 修复】激活下一个 draft 工程
             goal_id = project.goal_id
             if goal_id:
-                next_proj = db.execute(sa_text(
-                    "SELECT id FROM projects WHERE goal_id = :gid AND status = 'draft' ORDER BY created_at ASC LIMIT 1"
-                ), {"gid": goal_id}).fetchone()
+                next_proj = db.query(Project).filter(
+                    Project.goal_id == goal_id,
+                    Project.status == 'draft',
+                ).order_by(Project.created_at.asc()).first()
                 if next_proj:
-                    npid = next_proj[0]
-                    db.execute(sa_text("UPDATE projects SET status = 'active', updated_at = :now WHERE id = :pid"),
-                               {"now": datetime.now(), "pid": npid})
-                    logger.info(f"[Scheduler] Project {npid}: auto-activated (next draft project)")
+                    # 使用 ProjectStateMachine 迁移状态
+                    next_fsm = ProjectStateMachine(db, next_proj.id)
+                    next_fsm.transition("active", reason="自动激活下一个 draft 项目")
+                    next_proj.updated_at = datetime.utcnow()
+                    logger.info(f"[Scheduler] Project {next_proj.id}: auto-activated (next draft project)")
+
+            db.commit()
+
 
 def _publish_task_completed_event(task, task_goal_id, request, validation_passed, validation_reason):
     """Publish task_completed event."""
@@ -250,54 +250,55 @@ def _publish_task_completed_event(task, task_goal_id, request, validation_passed
     except Exception as e:
         logger.info(f"[MAK-233] Failed to publish task_completed event: {e}")
 
+
 def _sprint74_capture_and_compare(db, task, request, task_goal_id):
     """Sprint 74: Auto-capture solution for exploration/optimization goals."""
     try:
-        goal_mode_row = db.execute(
-            text("SELECT mode, title FROM goals WHERE id = :id"),
-            {"id": task_goal_id}
-        ).mappings().fetchone()
+        goal_mode_row = db.query(Goal).with_entities(Goal.mode, Goal.title).filter(
+            Goal.id == task_goal_id
+        ).first()
 
-        if goal_mode_row and goal_mode_row.get("mode") in ("exploration", "optimization"):
+        if goal_mode_row and goal_mode_row[0] == "research":
             try:
                 params_data = json.loads(request.result)
                 parameters = params_data if isinstance(params_data, dict) else {"raw": str(params_data)}
             except Exception:
-                parameters = {"raw": request.result[:200]}
+                parameters = {"raw": request.result[:200] if request.result else ""}
 
-            goal_title = goal_mode_row.get("title", "Goal")
-            current_round = db.execute(
-                text("SELECT COALESCE(MAX(round), 0) + 1 FROM solutions WHERE goal_id = :gid"),
-                {"gid": task_goal_id}
-            ).fetchone()[0]
+            goal_title = goal_mode_row[1] or "Goal"
+            current_round = db.query(Solution).filter(
+                Solution.goal_id == task_goal_id
+            ).count()
+            current_round += 1
+
             short_title = goal_title[:10] if goal_title else "sol"
             sol_name = f"sol-{current_round}-{short_title}"
-            score = request.confidence if request.confidence is not None else len(request.result) / 10.0
+            score = request.confidence if request.confidence is not None else len(request.result) / 10.0 if request.result else 0
             sol_id = f"sol-{uuid.uuid4().hex[:12]}"
-            now_iso = datetime.utcnow().isoformat()
+            now_iso = datetime.utcnow()
 
-            db.execute(text("""
-                INSERT INTO solutions (id, goal_id, round, name, status, parameters, score,
-                                       task_ids, created_at, updated_at)
-                VALUES (:id, :gid, :round, :name, 'compliant', :params, :score,
-                        :task_ids, :now, :now)
-            """), {
-                "id": sol_id, "gid": task_goal_id, "round": current_round,
-                "name": sol_name, "params": json.dumps(parameters, ensure_ascii=False),
-                "score": score, "task_ids": json.dumps([task.id], ensure_ascii=False),
-                "now": now_iso,
-            })
+            db.add(Solution(
+                id=sol_id,
+                goal_id=task_goal_id,
+                round=current_round,
+                name=sol_name,
+                status='compliant',
+                parameters=json.dumps(parameters, ensure_ascii=False),
+                score=score,
+                task_ids=json.dumps([task.id], ensure_ascii=False),
+                created_at=now_iso,
+                updated_at=now_iso,
+            ))
             db.commit()
 
-            sols = db.execute(text("""
-                SELECT id, score, is_optimal, round FROM solutions
-                WHERE goal_id = :gid ORDER BY round ASC
-            """), {"gid": task_goal_id}).mappings().fetchall()
+            sols = db.query(Solution).with_entities(
+                Solution.id, Solution.score, Solution.is_optimal, Solution.round
+            ).filter(Solution.goal_id == task_goal_id).order_by(Solution.round.asc()).all()
             if len(sols) >= 2:
-                best = max(sols, key=lambda s: s.get("score") or 0)
-                db.execute(text("UPDATE solutions SET is_optimal=0 WHERE goal_id=:gid"), {"gid": task_goal_id})
-                db.execute(text("UPDATE solutions SET is_optimal=1 WHERE id=:id"), {"id": best.get("id")})
+                best = max(sols, key=lambda s: s[1] or 0)
+                db.query(Solution).filter(Solution.goal_id == task_goal_id).update({"is_optimal": False})
+                db.query(Solution).filter(Solution.id == best[0]).update({"is_optimal": True})
                 db.commit()
-                logger.info(f"[Sprint 74] Optimal updated: {best.get('id')}")
+                logger.info(f"[Sprint 74] Optimal updated: {best[0]}")
     except Exception as e:
         logger.warning(f"[Sprint 74] Auto-capture warning: {e}")

@@ -5,8 +5,9 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import { Brain, Plus, Loader2, Zap, Settings, FileText } from "lucide-react"
 import { useNavigate } from "react-router-dom"
-import { goalsApi, type Goal, AttachmentUploaderApi } from "@/shared/utils/api"
-import { solutionsApi } from "@/evo/services/solutions"
+import { goalsApi, scenariosApi, type Goal, AttachmentUploaderApi } from "@/shared/utils/api"
+import { solutionsApi } from "@/evo/services/solutions";
+import { getModeLabel, getDiversityLabel, isResearchMode } from "@/shared/utils/modeDisplay";
 import { Button } from "@/shared/components/ui/button"
 import { Input } from "@/shared/components/ui/input"
 import { Label } from "@/shared/components/ui/label"
@@ -47,7 +48,10 @@ const CreateGoalSchema = z.object({
   }),
   deadline: z.string().optional(),
   workspace_path: z.string().min(1, { message: "工作目录不能为空" }),
-  mode: z.enum(["normal", "exploration", "optimization"]).optional(),
+  mode: z.enum(["engineering", "research"]).optional(),
+  scenario_id: z.string().optional(),
+  diversity: z.enum(["best", "portfolio"]).optional(),
+  portfolio_size: z.coerce.number().int().min(1).max(50).optional(),
   optimization_target: z.enum(["duration", "cost", "overall"]).optional(),
   convergence_threshold: z.coerce.number().min(0.01).max(1).optional(),
   max_rounds: z.coerce.number().int().min(1).max(100).optional(),
@@ -68,18 +72,61 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
   const [graspInjected, setGraspInjected] = useState(false)
   const [graspLoading, setGraspLoading] = useState(false)
   const [createdGoalId, setCreatedGoalId] = useState<string>("")
+  const [scenarios, setScenarios] = useState<Array<{ id: string; name: string }>>([])
+  const [recommendedAgent, setRecommendedAgent] = useState<string>("")
+  const [recommendedAgentId, setRecommendedAgentId] = useState<string>("")
 
   const form = useForm<CreateGoalData>({
     resolver: zodResolver(CreateGoalSchema),
     mode: "onChange",
     defaultValues: {
-      mode: "normal",
+      mode: "engineering",
       workspace_path: "",
-      optimization_target: undefined,
-      convergence_threshold: undefined,
-      max_rounds: undefined,
+      diversity: undefined,
+      portfolio_size: undefined,
     },
   })
+
+  // 加载场景列表
+  useEffect(() => {
+    scenariosApi.list({ status: "active", limit: 100 }).then(res => {
+      if (res?.items) {
+        setScenarios(res.items.map((s: any) => ({ id: s.id, name: s.name })))
+      }
+    }).catch(() => {
+      // 忽略加载错误
+    })
+  }, [])
+
+  // 场景变化时推荐主 agent
+  const selectedScenarioId = form.watch("scenario_id")
+  useEffect(() => {
+    if (!selectedScenarioId) {
+      setRecommendedAgent("")
+      setRecommendedAgentId("")
+      return
+    }
+    const selected = scenarios.find(s => s.id === selectedScenarioId)
+    if (!selected) {
+      setRecommendedAgent("")
+      setRecommendedAgentId("")
+      return
+    }
+    const name = selected.name
+    if (/交付|软件|开发|产品/i.test(name)) {
+      setRecommendedAgentId("mazi")
+      setRecommendedAgent("mazi（技术专家，适合软件交付类目标）")
+    } else if (/财务|分析|投资/i.test(name)) {
+      setRecommendedAgentId("guzi")
+      setRecommendedAgent("guzi（分析专家，适合财务分析类目标）")
+    } else if (/运维|DevOps|部署/i.test(name)) {
+      setRecommendedAgentId("kouzi")
+      setRecommendedAgent("kouzi（运维专家，适合 DevOps 部署类目标）")
+    } else {
+      setRecommendedAgentId("guzi")
+      setRecommendedAgent("guzi（通用分析，适合各类目标）")
+    }
+  }, [selectedScenarioId, scenarios])
 
   // Grasp 认知注入：当用户输入标题时，自动从认知库获取相关上下文
   useEffect(() => {
@@ -121,6 +168,7 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
         description: data.description || "",
         workspace_type: "local",
         workspace_path: data.workspace_path,
+        main_agent_id: recommendedAgentId || undefined,
       })
       
       // 设置 createdGoalId 用于附件上传
@@ -128,18 +176,17 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
         setCreatedGoalId(newGoal.id)
       }
       
-      // If exploration or optimization mode, set the goal mode via API
-      if (newGoal?.id && (data.mode === "exploration" || data.mode === "optimization")) {
+      // If research mode, set the goal mode via API
+      if (newGoal?.id && isResearchMode(data.mode || 'engineering')) {
         try {
           await solutionsApi.setGoalMode(newGoal.id, {
-            mode: data.mode,
-            optimization_target: data.optimization_target,
-            convergence_threshold: data.convergence_threshold,
-            max_rounds: data.max_rounds,
+            mode: data.mode || 'engineering',
+            diversity: data.diversity,
+            portfolio_size: data.portfolio_size,
           })
         } catch (modeErr) {
           console.warn(`Failed to set ${data.mode} mode:`, modeErr)
-          toast.warning(`目标已创建，但${data.mode === 'exploration' ? '探索' : '迭代'}模式参数设置失败，可稍后重试`)
+          toast.warning(`目标已创建，但研究模式参数设置失败，可稍后重试`)
         }
       }
       form.reset()
@@ -167,9 +214,7 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
   }
 
   const currentMode = form.watch("mode")
-  const isExploration = currentMode === "exploration"
-  const isOptimization = currentMode === "optimization"
-  const isAdvancedMode = isExploration || isOptimization
+  const isResearch = isResearchMode(currentMode || 'engineering')
 
   const formContent = (
     <Form {...form}>
@@ -282,9 +327,8 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
               </FormLabel>
               <div className="flex gap-2">
                 {[
-                  { value: "normal" as const, label: "常规模式", desc: "标准执行流程" },
-                  { value: "optimization" as const, label: "迭代模式", desc: "持续优化，逐步收敛" },
-                  { value: "exploration" as const, label: "探索模式", desc: "多方案探索，找到最优解" },
+                  { value: "engineering" as const, label: "工程模式", desc: "标准执行流程" },
+                  { value: "research" as const, label: "研究模式", desc: "多方案探索，找到最优解" },
                 ].map(opt => (
                   <button
                     key={opt.value}
@@ -306,87 +350,93 @@ export function CreateGoal({ onCreated, onCancel, open = true, onOpenChange }: C
           )}
         />
 
-        {/* ── Exploration/Optimization Mode Fields ────────────────────────── */}
-        {isAdvancedMode && (
+        {/* ── Scenario Selection ──────────────────────────────── */}
+        <FormField
+          control={form.control}
+          name="scenario_id"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>场景</FormLabel>
+              <Select onValueChange={field.onChange} value={field.value}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择场景（可选）" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {scenarios.map(s => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {/* ── Agent Recommendation Hint ───────────────────────── */}
+        {recommendedAgent && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+            <span className="font-medium">推荐主 agent：</span>{recommendedAgent}
+          </div>
+        )}
+
+        {/* ── Research Mode Fields ────────────────────────── */}
+        {isResearch && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 space-y-4">
             <div className="flex items-center gap-1.5 text-amber-800 text-sm font-medium">
               <Settings className="w-4 h-4" />
-              {isExploration ? '探索模式参数' : '迭代模式参数'}
+              研究模式参数
             </div>
 
             <FormField
               control={form.control}
-              name="optimization_target"
+              name="diversity"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>优化目标</FormLabel>
+                  <FormLabel>多样性策略</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择优化目标" />
+                        <SelectValue placeholder="选择多样性策略" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="duration">🏃 最短工期</SelectItem>
-                      <SelectItem value="cost">💰 最低成本</SelectItem>
-                      <SelectItem value="overall">⚖️ 综合最优</SelectItem>
+                      <SelectItem value="best">🏆 最优策略</SelectItem>
+                      <SelectItem value="portfolio">📊 组合策略</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FormDescription>探索模式将以此目标进行方案优化</FormDescription>
+                  <FormDescription>组合策略会生成多个方案并选择最优</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
+            {form.watch("diversity") === "portfolio" && (
               <FormField
                 control={form.control}
-                name="convergence_threshold"
+                name="portfolio_size"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>收敛阈值</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        max="1"
-                        placeholder="0.05"
-                        {...field}
-                        value={field.value || ""}
-                        onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : undefined)}
-                      />
-                    </FormControl>
-                    <FormDescription>默认 0.05（5%），改进低于此值时触发收敛</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="max_rounds"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>最大轮次</FormLabel>
+                    <FormLabel>组合数量</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
                         step="1"
                         min="1"
-                        max="100"
-                        placeholder="10"
+                        max="50"
+                        placeholder="5"
                         {...field}
                         value={field.value || ""}
                         onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : undefined)}
                       />
                     </FormControl>
-                    <FormDescription>最大迭代轮次，默认 10</FormDescription>
+                    <FormDescription>组合中包含的方案数量，默认 5</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-            </div>
+            )}
           </div>
         )}
 

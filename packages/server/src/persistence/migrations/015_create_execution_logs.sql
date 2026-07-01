@@ -1,5 +1,5 @@
 -- Migration: 015_create_execution_logs
--- Full-chain execution logging for Nexus
+-- Full-chain execution logging for Grever
 -- Records: heartbeat, task_start, task_progress, task_complete
 
 CREATE TABLE IF NOT EXISTS execution_logs (

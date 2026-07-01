@@ -13,9 +13,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
 
-from api.app_state import get_db_manager
+from models import Role
+from reins.common.database import get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -68,32 +68,30 @@ class RoleResponse(BaseModel):
 # 辅助函数
 # ===========================================================================
 
-ROLE_COLUMNS = [
-    "id", "name", "description", "permissions", "level",
-    "status", "created_at", "updated_at",
-]
-
 VALID_STATUSES = {"active", "inactive"}
 
 
-def _row_to_dict(row) -> dict:
-    """将 SQLAlchemy Row 转为 dict，自动解析 JSON 列和 DateTime"""
-    d = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-    # 解析 JSON 列
-    val = d.get("permissions")
-    if isinstance(val, str):
+def _role_to_dict(role: Role) -> dict:
+    """将 Role ORM 对象转为 dict，自动解析 JSON 列"""
+    perms = role.permissions
+    if isinstance(perms, str):
         try:
-            d["permissions"] = json.loads(val)
+            perms = json.loads(perms)
         except (json.JSONDecodeError, TypeError):
-            d["permissions"] = []
-    elif val is None:
-        d["permissions"] = []
-    # 格式化 DateTime
-    for dt_col in ("created_at", "updated_at"):
-        val = d.get(dt_col)
-        if val is not None and not isinstance(val, str):
-            d[dt_col] = str(val)
-    return d
+            perms = []
+    elif perms is None:
+        perms = []
+
+    return {
+        "id": role.id,
+        "name": role.name,
+        "description": role.description,
+        "permissions": perms,
+        "level": role.level,
+        "status": role.status,
+        "created_at": role.created_at.isoformat() if isinstance(role.created_at, datetime) else str(role.created_at) if role.created_at else None,
+        "updated_at": role.updated_at.isoformat() if isinstance(role.updated_at, datetime) else str(role.updated_at) if role.updated_at else None,
+    }
 
 
 # ===========================================================================
@@ -105,54 +103,38 @@ def create_role(req: RoleCreate):
     """
     创建一个新的 RBAC 角色。
     """
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        # 检查角色名是否已存在
+        existing = db.query(Role).filter(Role.name == req.name).first()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"Role already exists: {req.name}")
 
-    # 检查角色名是否已存在
-    with db.engine.connect() as conn:
-        existing = existing = conn.execute(
-        text("SELECT id FROM roles WHERE name = :name"),
-        {"name": req.name},
-        ).fetchone()
-
-    if existing:
-        raise HTTPException(status_code=409, detail=f"Role already exists: {req.name}")
-
-    role_id = f"role-{uuid.uuid4().hex[:12]}"
-    now = datetime.now().isoformat()
-
-    with db.engine.connect() as conn:
-        conn.execute(
-        text("""
-        INSERT INTO roles (
-        id, name, description, permissions, level, status,
-        created_at, updated_at
-        ) VALUES (
-        :id, :name, :description, :permissions, :level, 'active',
-        :created_at, :updated_at
+        now = datetime.now()
+        role = Role(
+            id=f"role-{uuid.uuid4().hex[:12]}",
+            name=req.name,
+            description=req.description,
+            permissions=json.dumps(req.permissions, ensure_ascii=False) if req.permissions else "[]",
+            level=req.level if req.level is not None else 1,
+            status='active',
+            created_at=now,
+            updated_at=now,
         )
-        """),
-        {
-        "id": role_id,
-        "name": req.name,
-        "description": req.description,
-        "permissions": json.dumps(req.permissions, ensure_ascii=False) if req.permissions else "[]",
-        "level": req.level if req.level is not None else 1,
-        "created_at": now,
-        "updated_at": now,
-        },
-        )
-        conn.commit()
+        db.add(role)
+        db.commit()
 
-    logger.info("Role %s created (name=%s, level=%d)", role_id, req.name, req.level or 1)
+        logger.info("Role %s created (name=%s, level=%d)", role.id, req.name, role.level)
 
-    cols = ", ".join(ROLE_COLUMNS)
-    with db.engine.connect() as conn:
-        created = created = conn.execute(
-        text(f"SELECT {cols} FROM roles WHERE id = :id"),
-        {"id": role_id},
-        ).fetchone()
-
-    return _row_to_dict(created)
+        return _role_to_dict(role)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -172,38 +154,28 @@ def list_roles(
             detail=f"Invalid status: {status}. Must be one of {VALID_STATUSES}",
         )
 
-    where_clauses = []
-    params: dict = {}
+    db = get_db_session()
+    try:
+        query = db.query(Role)
 
-    if status:
-        where_clauses.append("status = :status")
-        params["status"] = status
+        if status:
+            query = query.filter(Role.status == status)
 
-    if level is not None:
-        where_clauses.append("level = :level")
-        params["level"] = level
+        if level is not None:
+            query = query.filter(Role.level == level)
 
-    if search:
-        where_clauses.append("name LIKE :search")
-        params["search"] = f"%{search}%"
+        if search:
+            query = query.filter(Role.name.like(f"%{search}%"))
 
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        rows = query.order_by(Role.level.desc(), Role.name.asc()).all()
+        items = [_role_to_dict(r) for r in rows]
 
-    cols = ", ".join(ROLE_COLUMNS)
-    db = get_db_manager()
-
-    with db.engine.connect() as conn:
-        rows = rows = conn.execute(
-        text(f"SELECT {cols} FROM roles {where_sql} ORDER BY level DESC, name ASC"),
-        params,
-        ).fetchall()
-
-    items = [_row_to_dict(r) for r in rows]
-
-    return {
-        "items": items,
-        "total": len(items),
-    }
+        return {
+            "items": items,
+            "total": len(items),
+        }
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -213,19 +185,16 @@ def list_roles(
 @router.get("/{role_id}")
 def get_role(role_id: str):
     """查询单个角色详情"""
-    cols = ", ".join(ROLE_COLUMNS)
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        row = db.query(Role).filter(Role.id == role_id).first()
 
-    with db.engine.connect() as conn:
-        row = row = conn.execute(
-        text(f"SELECT {cols} FROM roles WHERE id = :id"),
-        {"id": role_id},
-        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
 
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
-
-    return _row_to_dict(row)
+        return _role_to_dict(row)
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -239,74 +208,63 @@ def update_role(role_id: str, req: RoleUpdate):
 
     支持部分更新（只传需要修改的字段）。
     """
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        # 验证角色存在
+        existing = db.query(Role).filter(Role.id == role_id).first()
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
 
-    # 验证角色存在
-    with db.engine.connect() as conn:
-        existing = existing = conn.execute(
-        text(f"SELECT {', '.join(ROLE_COLUMNS)} FROM roles WHERE id = :id"),
-        {"id": role_id},
-        ).fetchone()
+        # 构建更新字段
+        now = datetime.now()
+        updated = False
 
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
+        if req.name is not None:
+            # 检查新名称是否与其他角色冲突
+            name_conflict = db.query(Role).filter(
+                Role.name == req.name,
+                Role.id != role_id,
+            ).first()
+            if name_conflict:
+                raise HTTPException(status_code=409, detail=f"Role name already exists: {req.name}")
+            existing.name = req.name
+            updated = True
 
-    # 构建更新字段
-    updates = {}
-    now = datetime.now().isoformat()
-    updates["updated_at"] = now
+        if req.description is not None:
+            existing.description = req.description
+            updated = True
 
-    if req.name is not None:
-        # 检查新名称是否与其他角色冲突
-        with db.engine.connect() as conn:
-            name_conflict = name_conflict = conn.execute(
-            text("SELECT id FROM roles WHERE name = :name AND id != :id"),
-            {"name": req.name, "id": role_id},
-            ).fetchone()
-        if name_conflict:
-            raise HTTPException(status_code=409, detail=f"Role name already exists: {req.name}")
-        updates["name"] = req.name
+        if req.permissions is not None:
+            existing.permissions = json.dumps(req.permissions, ensure_ascii=False)
+            updated = True
 
-    if req.description is not None:
-        updates["description"] = req.description
+        if req.level is not None:
+            existing.level = req.level
+            updated = True
 
-    if req.permissions is not None:
-        updates["permissions"] = json.dumps(req.permissions, ensure_ascii=False)
+        if req.status is not None:
+            if req.status not in VALID_STATUSES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid status: {req.status}. Must be one of {VALID_STATUSES}",
+                )
+            existing.status = req.status
+            updated = True
 
-    if req.level is not None:
-        updates["level"] = req.level
+        existing.updated_at = now
+        db.commit()
 
-    if req.status is not None:
-        if req.status not in VALID_STATUSES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid status: {req.status}. Must be one of {VALID_STATUSES}",
-            )
-        updates["status"] = req.status
+        logger.info("Role %s updated", role_id)
 
-    if len(updates) <= 1:  # 只有 updated_at
-        return _row_to_dict(existing)
-
-    # 构建 UPDATE 语句
-    set_clauses = ", ".join(f"{k} = :{k}" for k in updates.keys())
-    with db.engine.connect() as conn:
-        conn.execute(
-        text(f"UPDATE roles SET {set_clauses} WHERE id = :id"),
-        {**updates, "id": role_id},
-        )
-        conn.commit()
-
-    logger.info("Role %s updated (fields=%s)", role_id, list(updates.keys()))
-
-    # 返回更新后的角色
-    cols = ", ".join(ROLE_COLUMNS)
-    with db.engine.connect() as conn:
-        updated = updated = conn.execute(
-        text(f"SELECT {cols} FROM roles WHERE id = :id"),
-        {"id": role_id},
-        ).fetchone()
-
-    return _row_to_dict(updated)
+        return _role_to_dict(existing)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -320,36 +278,38 @@ def delete_role(role_id: str):
 
     软删除：将状态设为 inactive 并添加删除标记。
     """
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        # 验证角色存在
+        existing = db.query(Role).with_entities(
+            Role.id, Role.name, Role.status
+        ).filter(Role.id == role_id).first()
 
-    # 验证角色存在
-    with db.engine.connect() as conn:
-        existing = existing = conn.execute(
-        text("SELECT id, name, status FROM roles WHERE id = :id"),
-        {"id": role_id},
-        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
 
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Role not found: {role_id}")
+        if existing[2] == "inactive":
+            raise HTTPException(status_code=400, detail=f"Role {role_id} is already inactive/deleted")
 
-    if existing.status == "inactive":
-        raise HTTPException(status_code=400, detail=f"Role {role_id} is already inactive/deleted")
+        now = datetime.now()
 
-    now = datetime.now().isoformat()
+        # 软删除：更新状态
+        db.query(Role).filter(Role.id == role_id).update({
+            "status": "inactive",
+            "updated_at": now,
+        })
+        db.commit()
 
-    # 软删除：更新状态
-    with db.engine.connect() as conn:
-        conn.execute(
-        text("UPDATE roles SET status = 'inactive', updated_at = :updated_at WHERE id = :id"),
-        {"updated_at": now, "id": role_id},
-        )
-        conn.commit()
+        logger.info("Role %s deleted (soft delete)", role_id)
 
-    logger.info("Role %s deleted (soft delete)", role_id)
-
-    return {
-        "id": role_id,
-        "name": existing.name,
-        "status": "inactive",
-        "deleted_at": now,
-    }
+        return {
+            "id": role_id,
+            "name": existing[1],
+            "status": "inactive",
+            "deleted_at": now.isoformat(),
+        }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

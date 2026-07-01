@@ -1,5 +1,5 @@
 """
-Nexus Reins API Server
+Grever Reins API Server
 基于 FastAPI 的 HTTP API 服务
 """
 

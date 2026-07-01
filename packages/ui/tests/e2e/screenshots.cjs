@@ -1,5 +1,5 @@
 /**
- * Nexus 页面截图工具
+ * Grever 页面截图工具
  * 使用 Playwright 直接截图，不需要 browser tool profile
  * 
  * 运行: node tests/e2e/screenshots.js
@@ -59,7 +59,7 @@ async function screenshotPage(browser, pageInfo) {
 }
 
 async function main() {
-  console.log('Starting Nexus screenshots...\n');
+  console.log('Starting Grever screenshots...\n');
   console.log(`Output: ${OUT_DIR}\n`);
   
   const browser = await chromium.launch({ headless: true });

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from models.project import Project
 from shared.database import get_db
+from reins.scheduler.statemachine import ProjectStateMachine
 
 router = APIRouter()
 
@@ -42,15 +43,21 @@ def pause_project(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Cannot pause project with status {project.status}")
 
     now = datetime.now(timezone.utc)
-    task_rows = db.execute(text(
-        "SELECT id FROM tasks WHERE project_id=:pid AND status IN ('in_progress','running','assigned')"
-    ), {"pid": project_id}).fetchall()
-    for trow in task_rows:
-        db.execute(text(
-            "UPDATE tasks SET status='paused', started_at=NULL, updated_at=:now WHERE id=:tid"
-        ), {"now": now, "tid": trow[0]})
+    task_rows = db.query(Task.id).filter(
+        Task.project_id == project_id,
+        Task.status.in_(['in_progress', 'running', 'assigned'])
+    ).all()
+    for (tid,) in task_rows:
+        db.query(Task).filter(Task.id == tid).update({
+            "status": "paused",
+            "started_at": None,
+            "updated_at": now,
+        })
 
-    project.status = 'paused'
+    # 使用 ProjectStateMachine 迁移状态
+    fsm = ProjectStateMachine(db, project_id)
+    fsm.transition("paused", reason="用户手动暂停")
+    
     project.updated_at = now
     db.commit()
     return {"ok": True, "project_id": project_id, "status": "paused",
@@ -83,9 +90,10 @@ def auto_assign_project_tasks(project_id: str, db: Session = Depends(get_db)):
         try:
             agent_id = assigner._select_best_agent([])
             if agent_id:
-                db.execute(text(
-                    "UPDATE tasks SET assigned_agent = :aid, updated_at = :now WHERE id = :tid"
-                ), {"aid": agent_id, "now": datetime.utcnow().isoformat(), "tid": tid})
+                db.query(Task).filter(Task.id == tid).update({
+                    "assigned_agent": agent_id,
+                    "updated_at": datetime.utcnow().isoformat(),
+                })
                 assigned_count += 1
                 results.append({"task_id": tid, "agent_id": agent_id})
             else:
@@ -112,19 +120,31 @@ def resume_project(project_id: str, db: Session = Depends(get_db)):
 
         now = datetime.now(timezone.utc)
         logger.info(f"[resume_project] now={now}")
-        paused = db.execute(text(
-            "SELECT id FROM tasks WHERE project_id=:pid AND status IN ('paused','failed')"
-        ), {"pid": project_id}).fetchall()
+        paused = db.query(Task).filter(
+            Task.project_id == project_id,
+            Task.status.in_(['paused', 'failed'])
+        ).all()
         logger.info(f"[resume_project] paused_count={len(paused)}")
         if paused:
-            db.execute(text(
-                "UPDATE tasks SET status='todo', assigned_agent=NULL, started_at=NULL, updated_at=:now, "
-                "result=NULL, result_summary=NULL, error_message=NULL, error_type=NULL "
-                "WHERE project_id=:pid AND status IN ('paused','failed')"
-            ), {"now": now, "pid": project_id})
+            db.query(Task).filter(
+                Task.project_id == project_id,
+                Task.status.in_(['paused', 'failed'])
+            ).update({
+                "status": "todo",
+                "assigned_agent": None,
+                "started_at": None,
+                "updated_at": now,
+                "result": None,
+                "result_summary": None,
+                "error_message": None,
+                "error_type": None,
+            })
             logger.info(f"[resume_project] updated {len(paused)} tasks")
 
-        project.status = 'active'
+        # 使用 ProjectStateMachine 迁移状态
+        fsm = ProjectStateMachine(db, project_id)
+        fsm.transition("active", reason="用户手动恢复")
+        
         project.updated_at = now
         db.commit()
         logger.info(f"[resume_project] committed")

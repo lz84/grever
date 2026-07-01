@@ -144,10 +144,10 @@ class ErrorCode(IntEnum):
 # P5-09-01 + P5-09-05: 业务异常类
 # ============================================================
 
-class NexusException(Exception):
+class GreverException(Exception):
     """
-    Nexus 基础异常类
-    所有 Nexus 异常都继承自此类
+    Grever 基础异常类
+    所有 Grever 异常都继承自此类
     """
 
     def __init__(
@@ -220,7 +220,7 @@ class NexusException(Exception):
             return 500
 
 
-class BusinessException(NexusException):
+class BusinessException(GreverException):
     """业务异常 - 业务逻辑错误"""
 
     def __init__(
@@ -232,7 +232,7 @@ class BusinessException(NexusException):
         super().__init__(code=code, message=message, details=details)
 
 
-class ValidationException(NexusException):
+class ValidationException(GreverException):
     """参数验证异常"""
 
     def __init__(
@@ -254,7 +254,7 @@ class ValidationException(NexusException):
         )
 
 
-class AuthenticationException(NexusException):
+class AuthenticationException(GreverException):
     """认证异常"""
 
     def __init__(
@@ -265,7 +265,7 @@ class AuthenticationException(NexusException):
         super().__init__(code=code, message=message)
 
 
-class AuthorizationException(NexusException):
+class AuthorizationException(GreverException):
     """授权异常"""
 
     def __init__(
@@ -276,7 +276,7 @@ class AuthorizationException(NexusException):
         super().__init__(code=code, message=message)
 
 
-class NotFoundException(NexusException):
+class NotFoundException(GreverException):
     """资源未找到异常"""
 
     def __init__(
@@ -298,7 +298,7 @@ class NotFoundException(NexusException):
         )
 
 
-class RateLimitException(NexusException):
+class RateLimitException(GreverException):
     """速率限制异常"""
 
     def __init__(
@@ -317,7 +317,7 @@ class RateLimitException(NexusException):
         )
 
 
-class DatabaseException(NexusException):
+class DatabaseException(GreverException):
     """数据库异常"""
 
     def __init__(
@@ -337,7 +337,7 @@ class DatabaseException(NexusException):
 # P5-09-05: 业务异常类 - Reins 领域
 # ============================================================
 
-class TaskNotFoundError(NexusException):
+class TaskNotFoundError(GreverException):
     """任务不存在"""
 
     def __init__(self, task_id: str):
@@ -348,7 +348,7 @@ class TaskNotFoundError(NexusException):
         )
 
 
-class AgentNotFoundError(NexusException):
+class AgentNotFoundError(GreverException):
     """Agent 不存在"""
 
     def __init__(self, agent_id: str):
@@ -359,7 +359,7 @@ class AgentNotFoundError(NexusException):
         )
 
 
-class AgentOfflineError(NexusException):
+class AgentOfflineError(GreverException):
     """Agent 离线"""
 
     def __init__(self, agent_id: str):
@@ -370,7 +370,7 @@ class AgentOfflineError(NexusException):
         )
 
 
-class InvalidStateTransitionError(NexusException):
+class InvalidStateTransitionError(GreverException):
     """无效的状态转换"""
 
     def __init__(
@@ -395,7 +395,7 @@ class InvalidStateTransitionError(NexusException):
         )
 
 
-class TaskStateConflictError(NexusException):
+class TaskStateConflictError(GreverException):
     """任务状态冲突"""
 
     def __init__(self, task_id: str, current_status: str):
@@ -406,7 +406,7 @@ class TaskStateConflictError(NexusException):
         )
 
 
-class GoalNotFoundError(NexusException):
+class GoalNotFoundError(GreverException):
     """Goal 不存在"""
 
     def __init__(self, goal_id: str):
@@ -417,7 +417,7 @@ class GoalNotFoundError(NexusException):
         )
 
 
-class WorkflowNotFoundError(NexusException):
+class WorkflowNotFoundError(GreverException):
     """Workflow 不存在"""
 
     def __init__(self, workflow_id: str):
@@ -428,7 +428,7 @@ class WorkflowNotFoundError(NexusException):
         )
 
 
-class CycleDetectedError(NexusException):
+class CycleDetectedError(GreverException):
     """检测到循环依赖"""
 
     def __init__(self, cycle_nodes: Optional[List[str]] = None):
@@ -494,7 +494,7 @@ def safe_error_message(error: Exception, include_details: bool = False) -> str:
 T = TypeVar("T")
 
 
-class NexusErrorHandler:
+class GreverErrorHandler:
     """
     Centralized exception interceptor.
 
@@ -509,14 +509,14 @@ class NexusErrorHandler:
     def __init__(self, include_details_in_logs: bool = True):
         self.include_details_in_logs = include_details_in_logs
 
-    def handle_exception(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> NexusException:
+    def handle_exception(self, error: Exception, context: Optional[Dict[str, Any]] = None) -> GreverException:
         """
-        Intercept an exception and convert to NexusException.
+        Intercept an exception and convert to GreverException.
         """
         reference_id = str(uuid.uuid4())[:8]
         ctx = context or {}
 
-        if isinstance(error, NexusException):
+        if isinstance(error, GreverException):
             safe_message = mask_sensitive_data(error.message)
             safe_details = {}
             for k, v in error.details.items():
@@ -554,7 +554,7 @@ class NexusErrorHandler:
 
         code = code_map.get(error_type, ErrorCode.INTERNAL_ERROR)
 
-        wrapped = NexusException(
+        wrapped = GreverException(
             code=code,
             message=error_message if self.include_details_in_logs else f"{error_type} occurred",
             details={
@@ -588,7 +588,7 @@ def with_error_handling(func: Callable[..., T]) -> Callable[..., T]:
     """
     Decorator to wrap a function with centralized error handling.
     """
-    handler = NexusErrorHandler()
+    handler = GreverErrorHandler()
 
     def wrapper(*args, **kwargs) -> T:
         try:
@@ -616,7 +616,7 @@ def with_safe_error_handling(
         def my_function(arg1, arg2):
             ...
     """
-    handler = NexusErrorHandler()
+    handler = GreverErrorHandler()
 
     def wrapper(*args, **kwargs) -> Any:
         try:

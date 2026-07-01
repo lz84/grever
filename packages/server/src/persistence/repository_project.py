@@ -1,5 +1,5 @@
 """
-Nexus Reins 仓库模块 - 项目仓库
+Grever Reins 仓库模块 - 项目仓库
 
 提供 Project 实体的数据持久化接口
 """

@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { GRASP } from '../../shared/api/paths';
+import { graspApi } from '../../shared/utils/api';
 import { Zap, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Pagination } from '@/shared/components/ui/pagination';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/components/ui/card';
@@ -60,16 +60,9 @@ export default function CognitiveInject() {
     const loadLogs = async () => {
       setLoading(true);
       try {
-        const res = await fetch(GRASP.INJECT_RULES + `/logs?page=${currentPage}&page_size=${ITEMS_PER_PAGE}`);
-        if (res.ok) {
-          const data = await res.json();
-          setLogs(data.logs || []);
-          setTotalLogs(data.total || data.logs?.length || 0);
-        } else {
-          console.error('Failed to load injection logs');
-          setLogs([]);
-          setTotalLogs(0);
-        }
+        const data = await graspApi.injectLogs(currentPage, ITEMS_PER_PAGE);
+        setLogs(data.logs || []);
+        setTotalLogs(data.total || data.logs?.length || 0);
       } catch (err) {
         console.error('Failed to load injection logs:', err);
         setLogs([]);
@@ -81,14 +74,8 @@ export default function CognitiveInject() {
 
     const loadRules = async () => {
       try {
-        const res = await fetch(GRASP.INJECT_RULES);
-        if (res.ok) {
-          const data = await res.json();
-          setRules(data.rules || []);
-        } else {
-          console.error('Failed to load injection rules');
-          setRules([]);
-        }
+        const data = await graspApi.injectRules();
+        setRules(data.rules || []);
       } catch (err) {
         console.error('Failed to load injection rules:', err);
         setRules([]);

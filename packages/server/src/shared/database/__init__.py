@@ -1,5 +1,5 @@
 """
-Nexus 数据库连接池模块
+Grever 数据库连接池模块
 """
 
 from .pool import (

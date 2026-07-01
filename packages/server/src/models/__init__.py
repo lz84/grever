@@ -23,7 +23,27 @@ from .workflow import (
 from .solution import Solution
 from .solution import SolutionStatus as _SolutionStatus
 from .iteration_constraint import IterationConstraint
-from .industry_tag import IndustryCapabilityTag, IndustryPack, IndustryPackContent
+from .industry_tag import IndustryCapabilityTag, IndustryPack, IndustryPackVersion
+from .skill import Skill
+from .knowledge_base import KnowledgeBase
+from .knowledge import KnowledgeEntry
+from .agent_scheme import AgentScheme
+from .agent_scheme_role import AgentSchemeRole
+from .human_input import HumanInputRequest
+from .execution_log import ExecutionLog
+from .task_activity_log import TaskActivityLog
+from .goal_iteration import GoalIteration
+from .task_comment import TaskComment
+from .mcp import MCPServer, MCPTool
+from .artifact import Artifact
+from .grasp_inject import GraspInjectRule, GraspInjectLog
+from .scenario import Scenario, ScenarioProject, ScenarioTask
+from .additional_models import (
+    Gene, EvolutionEvent, Capsule, A2AMessage,
+    TrustEvaluation, Role,
+    TaskLabel, TaskRelation,
+    Attachment, AttachmentLink,
+)
 
 # Aliases
 SqlWorkflow = Workflow
@@ -78,11 +98,24 @@ __all__ = [
     # ORM
     'Task', 'Goal', 'Project', 'Agent', 'AgentTagWeight', 'Workflow', 'WorkflowStep',
     'SqlWorkflow', 'SqlWorkflowStep', 'Solution', 'IterationConstraint',
+    'GoalIteration', 'TaskComment', 'MCPServer', 'MCPTool', 'Artifact',
+    'ExecutionLog', 'TaskActivityLog',
+    'IndustryCapabilityTag', 'Skill', 'KnowledgeBase', 'KnowledgeEntry', 'AgentScheme', 'AgentSchemeRole', 'GraspInjectRule', 'GraspInjectLog',
+    'Gene', 'EvolutionEvent', 'Capsule', 'A2AMessage',
+    'TrustEvaluation', 'Role',
+    'ScenarioProject', 'ScenarioTask', 'Scenario',
+    'TaskLabel', 'TaskRelation',
+    'Attachment', 'AttachmentLink',
     # Schemas
     'WorkflowCreate', 'WorkflowUpdate', 'WorkflowResponse',
     'WorkflowStepCreate', 'WorkflowStepUpdate', 'WorkflowStepResponse',
     'SolutionCreate', 'SolutionUpdate', 'SolutionResponse',
     'IterationConstraintCreate', 'IterationConstraintUpdate', 'IterationConstraintResponse',
+    'GoalIterationCreate', 'GoalIterationUpdate', 'GoalIterationResponse',
+    'TaskCommentCreate', 'TaskCommentUpdate', 'TaskCommentResponse',
+    'MCPServerCreate', 'MCPServerUpdate', 'MCPServerResponse',
+    'MCPToolCreate', 'MCPToolUpdate', 'MCPToolResponse',
+    'ArtifactCreate', 'ArtifactUpdate', 'ArtifactResponse',
     # Dataclasses
     'AgentInfo', 'Dispute', 'DecomposeResult', 'DiscoverResult',
     # Enums

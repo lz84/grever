@@ -5,12 +5,12 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import func
+from models import Task, HumanInputRequest
 
 from reins.common.database import get_db
 from reins.api.human_input_models import HumanReviewStats
 
-# 使用独立的 prefix，避免与其他子模块的 /stats 冲突
 router = APIRouter(tags=["human-input"])
 
 @router.get("/stats")
@@ -28,74 +28,83 @@ def get_human_input_stats(time_range: str = Query("week", description="统计范
         }
         date_filter = date_filter_map.get(time_range, "date('now', '-7 days')")
 
-        # Total counts
-        total_result = db.execute(text("SELECT COUNT(*) FROM human_input_requests")).fetchone()
-        total = total_result[0] if total_result else 0
-
-        pending_result = db.execute(text("SELECT COUNT(*) FROM human_input_requests WHERE status = 'pending'")).fetchone()
-        pending = pending_result[0] if pending_result else 0
-
-        submitted_result = db.execute(text("SELECT COUNT(*) FROM human_input_requests WHERE status = 'submitted'")).fetchone()
-        submitted = submitted_result[0] if submitted_result else 0
-
-        rejected_result = db.execute(text("SELECT COUNT(*) FROM human_input_requests WHERE status = 'rejected'")).fetchone()
-        rejected = rejected_result[0] if rejected_result else 0
+        # Total counts - converted to ORM
+        total = db.query(func.count(HumanInputRequest.id)).scalar() or 0
+        pending = db.query(func.count(HumanInputRequest.id)).filter(
+            HumanInputRequest.status == 'pending'
+        ).scalar() or 0
+        submitted = db.query(func.count(HumanInputRequest.id)).filter(
+            HumanInputRequest.status == 'submitted'
+        ).scalar() or 0
+        rejected = db.query(func.count(HumanInputRequest.id)).filter(
+            HumanInputRequest.status == 'rejected'
+        ).scalar() or 0
 
         # By type
-        by_type_result = db.execute(text("""
-            SELECT input_type, COUNT(*) as cnt
-            FROM human_input_requests
-            GROUP BY input_type
-        """)).fetchall()
-        by_type = {row[0]: row[1] for row in by_type_result}
+        by_type_rows = db.query(HumanInputRequest.input_type, func.count(HumanInputRequest.id)).group_by(
+            HumanInputRequest.input_type
+        ).all()
+        by_type = {row[0]: row[1] for row in by_type_rows}
 
         # By priority (if priority field exists)
         by_priority = {}
         try:
-            priority_result = db.execute(text("""
-                SELECT COALESCE(priority, 'none'), COUNT(*) as cnt
-                FROM human_input_requests
-                GROUP BY COALESCE(priority, 'none')
-            """)).fetchall()
-            by_priority = {row[0]: row[1] for row in priority_result}
+            priority_rows = db.query(
+                func.coalesce(HumanInputRequest.priority, 'none'),
+                func.count(HumanInputRequest.id)
+            ).group_by(func.coalesce(HumanInputRequest.priority, 'none')).all()
+            by_priority = {row[0]: row[1] for row in priority_rows}
         except Exception:
             pass
 
-        # Weekly trends (last 7 days)
-        weekly_result = db.execute(text("""
-            SELECT
-                date(created_at) as day,
-                COUNT(*) as created,
-                SUM(CASE WHEN status IN ('submitted', 'rejected') THEN 1 ELSE 0 END) as completed
-            FROM human_input_requests
-            WHERE created_at >= datetime('now', '-7 days')
-            GROUP BY date(created_at)
-            ORDER BY day
-        """)).fetchall()
-        weekly_trends = [{"day": str(row[0]), "created": row[1], "completed": row[2]} for row in weekly_result]
+        # Weekly trends - converted to ORM
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        from sqlalchemy import case
+        weekly_result = db.query(
+            HumanInputRequest.created_at,
+            func.count(HumanInputRequest.id)
+        ).filter(
+            HumanInputRequest.created_at >= cutoff
+        ).group_by(
+            func.date(HumanInputRequest.created_at)
+        ).order_by(
+            func.date(HumanInputRequest.created_at)
+        ).all()
+        weekly_trends = [{"day": str(row[0].date()) if row[0] else "", "created": row[1], "completed": 0} for row in weekly_result]
+
+        # Count completed per day via ORM
+        completed_result = db.query(
+            func.date(HumanInputRequest.created_at),
+            func.count(HumanInputRequest.id)
+        ).filter(
+            HumanInputRequest.created_at >= cutoff,
+            HumanInputRequest.status.in_(['submitted', 'rejected'])
+        ).group_by(
+            func.date(HumanInputRequest.created_at)
+        ).all()
+        completed_map = {str(row[0]): row[1] for row in completed_result}
+        for t in weekly_trends:
+            t["completed"] = completed_map.get(t["day"], 0)
 
         # Fill in missing days with zeros
-        all_days = {row[0] for row in weekly_result}
+        all_days = {t["day"] for t in weekly_trends}
         for i in range(6, -1, -1):
-            day_result = db.execute(text(f"SELECT date('now', '-{i} days')")).fetchone()
-            if day_result:
-                day_str = day_result[0]
-                if day_str not in all_days:
-                    weekly_trends.insert(0, {"day": day_str, "created": 0, "completed": 0})
+            day_str = (datetime.utcnow() - timedelta(days=i)).date().isoformat()
+            if day_str not in all_days:
+                weekly_trends.append({"day": day_str, "created": 0, "completed": 0})
+        weekly_trends.sort(key=lambda x: x["day"])
 
-        # Avg processing time
-        avg_result = db.execute(text("""
-            SELECT AVG(
-                CASE
-                    WHEN submitted_at IS NOT NULL AND created_at IS NOT NULL
-                    THEN (julianday(submitted_at) - julianday(created_at)) * 24
-                    ELSE NULL
-                END
-            )
-            FROM human_input_requests
-            WHERE submitted_at IS NOT NULL AND created_at IS NOT NULL
-        """)).fetchone()
-        avg_time = round(avg_result[0], 1) if avg_result and avg_result[0] else 0
+        # Avg processing time - converted to ORM
+        avg_result = db.query(
+            func.avg(
+                func.julianday(HumanInputRequest.submitted_at) - func.julianday(HumanInputRequest.created_at)
+            ) * 24
+        ).filter(
+            HumanInputRequest.submitted_at.isnot(None),
+            HumanInputRequest.created_at.isnot(None)
+        ).scalar()
+        avg_time = round(float(avg_result), 1) if avg_result else 0
 
         return {
             "total": total,
@@ -116,40 +125,21 @@ def get_human_review_stats(db: Session = Depends(get_db)):
     获取人类审核统计信息
 
     GET /api/v1/human-input/review-stats
-    返回: disputed/waiting_human/pending human_input 的数量，以及最近5条待处理项
-    对应 goal-cb4c76143b4c 的需求
     """
     try:
-        # 1. disputed tasks
-        disputed_result = db.execute(text(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'disputed'"
-        )).fetchone()
-        disputed_count = disputed_result[0] if disputed_result else 0
+        # COUNT queries converted to ORM
+        disputed_count = db.query(func.count(Task.id)).filter(Task.status == 'disputed').scalar() or 0
+        waiting_human_count = db.query(func.count(Task.id)).filter(Task.status == 'waiting_human').scalar() or 0
+        pending_count = db.query(func.count(HumanInputRequest.id)).filter(
+            HumanInputRequest.status == 'pending'
+        ).scalar() or 0
 
-        # 2. waiting_human tasks
-        waiting_human_result = db.execute(text(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'waiting_human'"
-        )).fetchone()
-        waiting_human_count = waiting_human_result[0] if waiting_human_result else 0
-
-        # 3. pending human_input_requests
-        pending_result = db.execute(text(
-            "SELECT COUNT(*) FROM human_input_requests WHERE status = 'pending'"
-        )).fetchone()
-        pending_count = pending_result[0] if pending_result else 0
-
-        # 获取最近5条待处理项（按创建时间倒序）
         recent_items: List[Dict[str, Any]] = []
 
-        # 从 tasks 表获取最近的 disputed 任务
-        disputed_tasks = db.execute(text("""
-            SELECT id, title, description, status, priority, created_at
-            FROM tasks
-            WHERE status = 'disputed'
-            ORDER BY created_at DESC
-            LIMIT 5
-        """)).fetchall()
-
+        # Recent disputed tasks - converted to ORM
+        disputed_tasks = db.query(Task).filter(Task.status == 'disputed').order_by(
+            Task.created_at.desc()
+        ).limit(5).all()
         for task in disputed_tasks:
             recent_items.append({
                 "id": task.id,
@@ -162,15 +152,10 @@ def get_human_review_stats(db: Session = Depends(get_db)):
                 "task_id": task.id
             })
 
-        # 从 tasks 表获取最近的 waiting_human 任务
-        waiting_tasks = db.execute(text("""
-            SELECT id, title, description, status, priority, created_at
-            FROM tasks
-            WHERE status = 'waiting_human'
-            ORDER BY created_at DESC
-            LIMIT 5
-        """)).fetchall()
-
+        # Recent waiting_human tasks - converted to ORM
+        waiting_tasks = db.query(Task).filter(Task.status == 'waiting_human').order_by(
+            Task.created_at.desc()
+        ).limit(5).all()
         for task in waiting_tasks:
             recent_items.append({
                 "id": task.id,
@@ -183,15 +168,10 @@ def get_human_review_stats(db: Session = Depends(get_db)):
                 "task_id": task.id
             })
 
-        # 从 human_input_requests 表获取最近的 pending 请求
-        pending_requests = db.execute(text("""
-            SELECT id, title, description, status, created_at, task_id
-            FROM human_input_requests
-            WHERE status = 'pending'
-            ORDER BY created_at DESC
-            LIMIT 5
-        """)).fetchall()
-
+        # Recent pending human_input_requests - converted to ORM
+        pending_requests = db.query(HumanInputRequest).filter(
+            HumanInputRequest.status == 'pending'
+        ).order_by(HumanInputRequest.created_at.desc()).limit(5).all()
         for req in pending_requests:
             recent_items.append({
                 "id": req.id,
@@ -204,7 +184,6 @@ def get_human_review_stats(db: Session = Depends(get_db)):
                 "input_id": req.id
             })
 
-        # 按创建时间排序，取最近的5条
         recent_items.sort(key=lambda x: x["created_at"], reverse=True)
         recent_items = recent_items[:5]
 

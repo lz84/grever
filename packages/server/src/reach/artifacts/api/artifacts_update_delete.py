@@ -6,63 +6,57 @@ import json
 import os
 
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import text
 
-from reins.common.database import get_db_manager
+from models.artifact import Artifact
 from .artifacts_models import ArtifactUpdate, ArtifactResponse
 from .artifacts_helpers import _row_to_artifact
+from reins.common.database import get_db_manager
 
 router = APIRouter()
 
 @router.patch("/{artifact_id}", response_model=ArtifactResponse)
 def update_artifact(artifact_id: str, req: ArtifactUpdate):
     """更新成果物信息"""
-    engine = get_db_manager().engine
-    with engine.connect() as conn:
-        row = conn.execute(text(
-            "SELECT * FROM artifacts WHERE id = :id"
-        ), {"id": artifact_id}).fetchone()
+    db = get_db_manager().get_session()
+    try:
+        artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
+        if not artifact:
+            raise HTTPException(404, "Artifact not found")
 
-    if not row:
-        raise HTTPException(404, "Artifact not found")
+        if req.name is not None:
+            artifact.name = req.name
+        if req.description is not None:
+            artifact.description = req.description
+        if req.tags is not None:
+            artifact.tags = json.dumps(req.tags, ensure_ascii=False)
 
-    updates = {}
-    if req.name is not None:
-        updates["name"] = req.name
-    if req.description is not None:
-        updates["description"] = req.description
-    if req.tags is not None:
-        updates["tags"] = json.dumps(req.tags, ensure_ascii=False)
+        db.commit()
 
-    if updates:
-        updates["id"] = artifact_id
-        with engine.begin() as conn:
-            set_clause = ", ".join(f"{k} = :{k}" for k in updates if k != "id")
-            conn.execute(text(f"UPDATE artifacts SET {set_clause} WHERE id = :id"), updates)
-
-    with engine.connect() as conn:
-        row = conn.execute(text(
-            "SELECT * FROM artifacts WHERE id = :id"
-        ), {"id": artifact_id}).fetchone()
-
-    return ArtifactResponse(**_row_to_artifact(dict(row._mapping)))
+        row = db.query(Artifact).filter(Artifact.id == artifact_id).first()
+        return ArtifactResponse(**_row_to_artifact({
+            "id": row.id, "name": row.name, "description": row.description,
+            "storage_path": row.storage_path, "mime_type": row.mime_type,
+            "file_size": row.file_size, "sha256_hash": row.sha256_hash,
+            "tags": row.tags, "created_by": row.created_by,
+            "created_at": row.created_at, "updated_at": row.updated_at,
+        }))
+    finally:
+        db.close()
 
 @router.delete("/{artifact_id}")
 def delete_artifact(artifact_id: str):
     """删除成果物"""
-    engine = get_db_manager().engine
-    with engine.connect() as conn:
-        row = conn.execute(text(
-            "SELECT storage_path FROM artifacts WHERE id = :id"
-        ), {"id": artifact_id}).fetchone()
+    db = get_db_manager().get_session()
+    try:
+        artifact = db.query(Artifact).filter(Artifact.id == artifact_id).first()
+        if not artifact:
+            raise HTTPException(404, "Artifact not found")
 
-    if not row:
-        raise HTTPException(404, "Artifact not found")
+        if artifact.storage_path and os.path.exists(artifact.storage_path):
+            os.remove(artifact.storage_path)
 
-    if row[0] and os.path.exists(row[0]):
-        os.remove(row[0])
-
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM artifacts WHERE id = :id"), {"id": artifact_id})
-
-    return {"success": True, "message": "Artifact deleted"}
+        db.delete(artifact)
+        db.commit()
+        return {"success": True, "message": "Artifact deleted"}
+    finally:
+        db.close()

@@ -8,6 +8,11 @@ Submodules (all <500 lines):
   - tasks_crud_update:   PUT /{task_id}, PATCH /{task_id}
   - tasks_crud_delete:   DELETE /{task_id}
   - tasks_list:          GET / (list tasks)
+  - tasks_state:         state management + GET /statuses
+  - tasks_lifecycle:     POST /{task_id}/pause/resume/restart/terminate/takeover
+  - tasks_review:        /{task_id}/verify, /review, /verifier, /verifications
+  - tasks_execution:     /{task_id}/progress, /fail, /failure-log, /retry
+  - tasks_labels:        /labels/all, /{task_id}/labels, /{task_id}/labels/{label_id}
 """
 from fastapi import APIRouter
 
@@ -16,6 +21,11 @@ from reins.api.tasks_crud_create import router as tasks_crud_create_router
 from reins.api.tasks_crud_update import router as tasks_crud_update_router
 from reins.api.tasks_crud_delete import router as tasks_crud_delete_router
 from reins.api.tasks_list import router as tasks_list_router
+from reins.api.tasks_state import router as tasks_state_router
+from reins.api.tasks_lifecycle import router as tasks_lifecycle_router
+from reins.api.tasks_review import router as tasks_review_router
+from reins.api.tasks_execution import router as tasks_execution_router
+from reins.api.tasks_labels import router as tasks_labels_router
 
 # Merge all sub-module routers into one
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -27,6 +37,11 @@ from reins.api.tasks_list import list_tasks
 router.add_api_route("", list_tasks, methods=["GET"], tags=["tasks"])
 
 router.include_router(tasks_list_router)
+router.include_router(tasks_state_router)  # /statuses 必须在 /{task_id} 之前注册
+router.include_router(tasks_labels_router)  # /labels/all 必须在 /{task_id} 之前注册
+router.include_router(tasks_lifecycle_router)  # /{task_id}/pause|resume 必须在 /{task_id} 之前注册
+router.include_router(tasks_review_router)  # /{task_id}/verify, /review, /verifier, /verifications
+router.include_router(tasks_execution_router)  # /{task_id}/progress, /fail, /failure-log, /retry
 router.include_router(tasks_crud_read_router)
 router.include_router(tasks_crud_create_router)
 router.include_router(tasks_crud_update_router)

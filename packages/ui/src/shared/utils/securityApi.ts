@@ -1,5 +1,5 @@
 /**
- * Nexus API 服务层 - 安全中心 API
+ * Grever API 服务层 - 安全中心 API
  * 调用真实后端 API
  * 
  * ⚠️ 所有路径从 api/paths.ts 导入

@@ -1,12 +1,12 @@
 """
-Nexus 技能库 API — 技能扫描、下载、安装指令生成
+Grever 技能库 API — 技能扫描、下载、安装指令生成
 
 提供:
 - 技能列表 / 技能详情（已有）
 - 技能文件原始下载 /api/v1/skills/{id}/raw/{filename}
 - 安装指令生成 /api/v1/skills/{id}/install-prompt
 
-Agent 通过 URL 从 Nexus 拉取技能，不依赖本地路径。
+Agent 通过 URL 从 Grever 拉取技能，不依赖本地路径。
 """
 import os
 import re
@@ -17,14 +17,14 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 
-# Nexus project root
+# Grever project root
 NEXUS_ROOT = Path(__file__).resolve().parents[4]
 
 # Single source of truth: all skills live in skills/
 SKILLS_DIR = NEXUS_ROOT / "skills"
 
-# Nexus base URL for agent installation (env override for production)
-NEXUS_BASE_URL = os.environ.get("NEXUS_BASE_URL", "http://localhost:8091")
+# Grever base URL for agent installation (env override for production)
+GREVER_BASE_URL = os.environ.get("GREVER_BASE_URL", "http://localhost:8091")
 
 class SkillInfo(BaseModel):
     id: str
@@ -68,7 +68,7 @@ def _parse_skill_md(skill_dir: Path) -> dict | None:
 
     category = _categorize(skill_dir.name, name, description)
 
-    skill_url = f"{NEXUS_BASE_URL}/api/v1/skills/{skill_dir.name}"
+    skill_url = f"{GREVER_BASE_URL}/api/v1/skills/{skill_dir.name}"
 
     return {
         "id": skill_dir.name,
@@ -77,7 +77,7 @@ def _parse_skill_md(skill_dir: Path) -> dict | None:
         "category": category,
         "installed": True,
         "path": str(skill_dir),
-        "source": "Nexus",
+        "source": "Grever",
         "install_url": skill_url,
     }
 
@@ -100,7 +100,7 @@ def _categorize(dir_name: str, name: str, description: str) -> str:
 
 @router.get("")
 def list_skills(category: str = "", q: str = ""):
-    """列出所有 Nexus 自带技能"""
+    """列出所有 Grever 自带技能"""
     skills = []
     if not SKILLS_DIR.exists():
         return {"skills": [], "total": 0}
@@ -193,7 +193,7 @@ def get_install_prompt(skill_id: str):
     files = [f.name for f in skill_dir.iterdir() if f.is_file()
              and not f.name.startswith("_") and f.suffix != ".pyc"]
 
-    skill_url = f"{NEXUS_BASE_URL}/api/v1/skills/{skill_id}"
+    skill_url = f"{GREVER_BASE_URL}/api/v1/skills/{skill_id}"
     file_urls = "\n".join([
         f"   - {f}: {skill_url}/raw/{f}" for f in sorted(files)
     ])
@@ -210,7 +210,7 @@ def get_install_prompt(skill_id: str):
 
     env_hint = env_vars.get(skill_id, "NEXUS_SERVER_URL")
 
-    prompt = f"""请安装 Nexus 技能 "{info['name']}"（{skill_id}）。
+    prompt = f"""请安装 Grever 技能 "{info['name']}"（{skill_id}）。
 
 技能信息：
 - 名称: {info['name']}
@@ -218,7 +218,7 @@ def get_install_prompt(skill_id: str):
 - 技能目录: {skill_url}
 
 安装步骤：
-1. 从 Nexus 下载以下文件到你的 skills/{skill_id}/ 目录：
+1. 从 Grever 下载以下文件到你的 skills/{skill_id}/ 目录：
 {file_urls}
 
 2. 确保你的 skills/{skill_id}/SKILL.md 和对应的脚本文件已就位。
@@ -246,7 +246,7 @@ def get_skill_files(skill_id: str):
             files.append({
                 "name": f.name,
                 "size": f.stat().st_size,
-                "url": f"{NEXUS_BASE_URL}/api/v1/skills/{skill_id}/raw/{f.name}",
+                "url": f"{GREVER_BASE_URL}/api/v1/skills/{skill_id}/raw/{f.name}",
             })
 
     return {"skill_id": skill_id, "files": files, "total": len(files)}

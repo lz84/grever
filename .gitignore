@@ -10,7 +10,6 @@ dist/
 *.db
 *.db-shm
 *.db-wal
-!*.db.backup
 data/*.db
 data/logs/
 data/memory/
@@ -27,12 +26,6 @@ config/*.key
 config/*.pem
 config/*.secret
 
-# GraphRAG internal
-data/graphrag/cache/
-data/graphrag/output/
-data/graphrag/update_output
-data/graphrag/input/
-
 # IDE
 .vscode/
 .idea/
@@ -48,20 +41,3 @@ logs/
 
 # Cognitive data
 *.jsonl
-
-# Temp
-*.tmp
-logs/nexus_result_*.json
-
-# Archive
-/archive/
-
-# Internal docs (kept locally, not for open source)
-docs/03-迭代计划/
-docs/05-项目管理/
-docs/06-产品运营/
-docs/07-演示汇报/
-docs/08-测试报告/
-docs/99-参考资料/
-docs/sprints/
-skills/grasp/memory/

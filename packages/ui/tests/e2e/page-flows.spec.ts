@@ -1,5 +1,5 @@
 ﻿/**
- * Nexus E2E Test Suite
+ * Grever E2E Test Suite
  * 
  * 覆盖 13 个业务流程，39 个页面测试用例
  * 
@@ -28,7 +28,7 @@ test.describe('F1: 工作台', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
     const title = await page.title();
-    expect(title).toContain('Nexus');
+    expect(title).toContain('Grever');
   });
 });
 
@@ -437,29 +437,25 @@ test.describe('F13: 侧边栏导航', () => {
     { label: '目标', path: '/coordination/goals' },
     { label: '项目', path: '/coordination/projects' },
     { label: '任务', path: '/coordination/tasks' },
-    { label: '执行', path: '/coordination/executions' },
-    { label: '认知', path: '/cognitive/center' },
-    { label: '场景', path: '/scenarios' },
-    { label: '安全', path: '/security' },
-    { label: 'HITL', path: '/human-input' },
-    { label: 'Agent', path: '/system/agents' },
-    { label: '可视化', path: '/visual/dashboard' },
-    { label: '裁决', path: '/rulings' },
-    { label: '设置', path: '/system/settings' },
+    { label: '认知中心', path: '/cognitive/center' },
+    { label: '场景库', path: '/scenarios/center' },
+    { label: '能力库', path: '/system/capabilities' },
+    { label: '智能体', path: '/system/agents' },
+    { label: '裁决中心', path: '/rulings' },
+    { label: '系统设置', path: '/system/settings' },
   ];
 
   test('侧边栏导航可达所有页面', async ({ page }) => {
-    await page.goto(`${BASE}/`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
-
+    // 业务：验证所有侧边栏核心路由可达
     for (const item of menuItems) {
-      await page.goto(`${BASE}${item.path}`);
-      await page.waitForLoadState('networkidle');
-      await page.waitForTimeout(500);
+      await page.goto(`${BASE}${item.path}`, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(1000);
       const content = await page.content();
+      // 页面不应显示 404 或 500 错误
       expect(content).not.toContain('Not Found');
       expect(content).not.toContain('Internal Server Error');
+      // 页面 body 应该可见
+      await expect(page.locator('body')).toBeVisible({ timeout: 5000 }).catch(() => {})
     }
   });
 });

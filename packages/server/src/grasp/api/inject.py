@@ -13,7 +13,7 @@ import uuid
 from pydantic import BaseModel
 
 from reins.common.database import get_db
-from sqlalchemy import text
+from models import GraspInjectRule, GraspInjectLog
 
 router = APIRouter(prefix="/api/v1/grasp/inject", tags=["grasp-inject"])
 
@@ -59,60 +59,75 @@ def list_inject_rules(
     """获取注入规则列表，支持 enabled 筛选"""
     try:
         if enabled is not None:
-            stmt = text("SELECT * FROM grasp_inject_rules WHERE enabled = :enabled ORDER BY created_at DESC")
-            rules = db.execute(stmt, {"enabled": enabled}).fetchall()
+            rules = db.query(GraspInjectRule).filter(GraspInjectRule.enabled == enabled).order_by(GraspInjectRule.created_at.desc()).all()
         else:
-            stmt = text("SELECT * FROM grasp_inject_rules ORDER BY created_at DESC")
-            rules = db.execute(stmt).fetchall()
+            rules = db.query(GraspInjectRule).order_by(GraspInjectRule.created_at.desc()).all()
         
         results = []
         for r in rules:
-            # r 是 sqlalchemy.engine.row.Row，字段是字符串
-            # created_at/updated_at 是字符串，已经是 ISO 格式
-            created_at = r.created_at if hasattr(r, 'created_at') else r[5]
-            updated_at = r.updated_at if hasattr(r, 'updated_at') else r[6]
-            
-            # created_at/updated_at 是字符串，不需要 isoformat()
-            created_at_str = str(created_at) if created_at else None
-            updated_at_str = str(updated_at) if updated_at else None
+            created_at = r.created_at.isoformat() if r.created_at else None
+            updated_at = r.updated_at.isoformat() if r.updated_at else None
             
             results.append(InjectRuleResponse(
-                id=r.id if hasattr(r, 'id') else r[0],
-                name=r.name if hasattr(r, 'name') else r[1],
-                trigger_condition=r.trigger_condition if hasattr(r, 'trigger_condition') else r[2],
-                target_kb=r.target_kb if hasattr(r, 'target_kb') else r[3],
-                enabled=bool(r.enabled if hasattr(r, 'enabled') else r[4]),
-                created_at=created_at_str,
-                updated_at=updated_at_str,
+                id=r.id,
+                name=r.name,
+                trigger_condition=r.trigger_condition,
+                target_kb=r.target_kb,
+                enabled=bool(r.enabled),
+                created_at=created_at,
+                updated_at=updated_at,
             ))
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query inject rules: {str(e)}")
 
+@router.get("/rules/logs")
+def list_inject_logs(
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100)
+):
+    """获取注入日志列表（分页）"""
+    try:
+        offset = (page - 1) * page_size
+        total = db.query(GraspInjectLog).count()
+        logs = db.query(GraspInjectLog).order_by(GraspInjectLog.created_at.desc()).offset(offset).limit(page_size).all()
+        results = []
+        for l in logs:
+            results.append({
+                'id': l.id,
+                'source': l.source,
+                'type': l.type,
+                'cognition_count': l.cognition_count,
+                'status': l.status,
+                'error_message': l.error_message,
+                'extra': l.extra,
+                'created_at': l.created_at.isoformat() if l.created_at else None,
+            })
+        return {'total': total, 'page': page, 'page_size': page_size, 'items': results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to query inject logs: {str(e)}")
+
 @router.get("/rules/{rule_id}", response_model=InjectRuleResponse)
 def get_inject_rule(rule_id: str, db: Session = Depends(get_db)):
     """获取单个注入规则详情"""
     try:
-        stmt = text("SELECT * FROM grasp_inject_rules WHERE id = :rule_id")
-        rule = db.execute(stmt, {"rule_id": rule_id}).fetchone()
+        rule = db.query(GraspInjectRule).filter(GraspInjectRule.id == rule_id).first()
         
         if not rule:
             raise HTTPException(status_code=404, detail="Rule not found")
         
-        created_at = rule.created_at if hasattr(rule, 'created_at') else rule[5]
-        updated_at = rule.updated_at if hasattr(rule, 'updated_at') else rule[6]
-        
-        created_at_str = str(created_at) if created_at else None
-        updated_at_str = str(updated_at) if updated_at else None
+        created_at = rule.created_at.isoformat() if rule.created_at else None
+        updated_at = rule.updated_at.isoformat() if rule.updated_at else None
         
         return InjectRuleResponse(
-            id=rule.id if hasattr(rule, 'id') else rule[0],
-            name=rule.name if hasattr(rule, 'name') else rule[1],
-            trigger_condition=rule.trigger_condition if hasattr(rule, 'trigger_condition') else rule[2],
-            target_kb=rule.target_kb if hasattr(rule, 'target_kb') else rule[3],
-            enabled=bool(rule.enabled if hasattr(rule, 'enabled') else rule[4]),
-            created_at=created_at_str,
-            updated_at=updated_at_str,
+            id=rule.id,
+            name=rule.name,
+            trigger_condition=rule.trigger_condition,
+            target_kb=rule.target_kb,
+            enabled=bool(rule.enabled),
+            created_at=created_at,
+            updated_at=updated_at,
         )
     except HTTPException:
         raise
@@ -125,42 +140,37 @@ def create_inject_rule(request: InjectRuleCreate, db: Session = Depends(get_db))
     try:
         rule_id = str(uuid.uuid4())
         now = datetime.now()
-        stmt = text("""
-            INSERT INTO grasp_inject_rules (id, name, trigger_condition, target_kb, enabled, created_at, updated_at)
-            VALUES (:id, :name, :trigger_condition, :target_kb, :enabled, :created_at, :updated_at)
-        """)
-        db.execute(stmt, {
-            "id": rule_id,
-            "name": request.name,
-            "trigger_condition": request.trigger_condition,
-            "target_kb": request.target_kb,
-            "enabled": 1 if request.enabled else 0,
-            "created_at": now,
-            "updated_at": now,
-        })
-        db.commit()
         
-        # 查询返回
-        stmt = text("SELECT * FROM grasp_inject_rules WHERE id = :rule_id")
-        rule = db.execute(stmt, {"rule_id": rule_id}).fetchone()
+        # 创建新规则
+        new_rule = GraspInjectRule(
+            id=rule_id,
+            name=request.name,
+            trigger_condition=request.trigger_condition,
+            target_kb=request.target_kb,
+            enabled=1 if request.enabled else 0,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(new_rule)
+        # db.commit() is handled automatically by get_db dependency
         
-        created_at = rule.created_at if hasattr(rule, 'created_at') else rule[5]
-        updated_at = rule.updated_at if hasattr(rule, 'updated_at') else rule[6]
+        # Refresh to get auto-generated fields
+        db.refresh(new_rule)
         
-        created_at_str = str(created_at) if created_at else None
-        updated_at_str = str(updated_at) if updated_at else None
+        created_at = new_rule.created_at.isoformat() if new_rule.created_at else None
+        updated_at = new_rule.updated_at.isoformat() if new_rule.updated_at else None
         
         return InjectRuleResponse(
-            id=rule.id if hasattr(rule, 'id') else rule[0],
-            name=rule.name if hasattr(rule, 'name') else rule[1],
-            trigger_condition=rule.trigger_condition if hasattr(rule, 'trigger_condition') else rule[2],
-            target_kb=rule.target_kb if hasattr(rule, 'target_kb') else rule[3],
-            enabled=bool(rule.enabled if hasattr(rule, 'enabled') else rule[4]),
-            created_at=created_at_str,
-            updated_at=updated_at_str,
+            id=new_rule.id,
+            name=new_rule.name,
+            trigger_condition=new_rule.trigger_condition,
+            target_kb=new_rule.target_kb,
+            enabled=bool(new_rule.enabled),
+            created_at=created_at,
+            updated_at=updated_at,
         )
     except Exception as e:
-        db.rollback()
+        # db.rollback() is handled automatically by get_db dependency
         raise HTTPException(status_code=500, detail=f"Failed to create inject rule: {str(e)}")
 
 @router.patch("/rules/{rule_id}", response_model=InjectRuleResponse)
@@ -168,71 +178,60 @@ def update_inject_rule(rule_id: str, request: InjectRuleUpdate, db: Session = De
     """更新注入规则（部分更新）"""
     try:
         # 先检查是否存在
-        stmt = text("SELECT * FROM grasp_inject_rules WHERE id = :rule_id")
-        existing = db.execute(stmt, {"rule_id": rule_id}).fetchone()
-        if not existing:
+        rule = db.query(GraspInjectRule).filter(GraspInjectRule.id == rule_id).first()
+        if not rule:
             raise HTTPException(status_code=404, detail="Rule not found")
         
         # 构建更新字段
-        update_fields = {"updated_at": datetime.now()}
         if request.name is not None:
-            update_fields["name"] = request.name
+            rule.name = request.name
         if request.trigger_condition is not None:
-            update_fields["trigger_condition"] = request.trigger_condition
+            rule.trigger_condition = request.trigger_condition
         if request.target_kb is not None:
-            update_fields["target_kb"] = request.target_kb
+            rule.target_kb = request.target_kb
         if request.enabled is not None:
-            update_fields["enabled"] = 1 if request.enabled else 0
+            rule.enabled = 1 if request.enabled else 0
+        rule.updated_at = datetime.now()
         
-        # 动态构建 UPDATE 语句
-        set_clauses = ", ".join([f"{k} = :{k}" for k in update_fields.keys()])
-        stmt = text(f"UPDATE grasp_inject_rules SET {set_clauses} WHERE id = :rule_id")
+        # db.commit() is handled automatically by get_db dependency
         
-        update_params = {"rule_id": rule_id, **update_fields}
-        db.execute(stmt, update_params)
-        db.commit()
+        # Refresh to get updated values
+        db.refresh(rule)
         
-        # 查询返回
-        stmt = text("SELECT * FROM grasp_inject_rules WHERE id = :rule_id")
-        rule = db.execute(stmt, {"rule_id": rule_id}).fetchone()
-        
-        created_at = rule.created_at if hasattr(rule, 'created_at') else rule[5]
-        updated_at = rule.updated_at if hasattr(rule, 'updated_at') else rule[6]
-        
-        created_at_str = str(created_at) if created_at else None
-        updated_at_str = str(updated_at) if updated_at else None
+        created_at = rule.created_at.isoformat() if rule.created_at else None
+        updated_at = rule.updated_at.isoformat() if rule.updated_at else None
         
         return InjectRuleResponse(
-            id=rule.id if hasattr(rule, 'id') else rule[0],
-            name=rule.name if hasattr(rule, 'name') else rule[1],
-            trigger_condition=rule.trigger_condition if hasattr(rule, 'trigger_condition') else rule[2],
-            target_kb=rule.target_kb if hasattr(rule, 'target_kb') else rule[3],
-            enabled=bool(rule.enabled if hasattr(rule, 'enabled') else rule[4]),
-            created_at=created_at_str,
-            updated_at=updated_at_str,
+            id=rule.id,
+            name=rule.name,
+            trigger_condition=rule.trigger_condition,
+            target_kb=rule.target_kb,
+            enabled=bool(rule.enabled),
+            created_at=created_at,
+            updated_at=updated_at,
         )
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        # db.rollback() is handled automatically by get_db dependency
         raise HTTPException(status_code=500, detail=f"Failed to update inject rule: {str(e)}")
 
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_inject_rule(rule_id: str, db: Session = Depends(get_db)):
     """删除注入规则"""
     try:
-        stmt = text("DELETE FROM grasp_inject_rules WHERE id = :rule_id")
-        result = db.execute(stmt, {"rule_id": rule_id})
-        db.commit()
-        
-        if result.rowcount == 0:
+        rule = db.query(GraspInjectRule).filter(GraspInjectRule.id == rule_id).first()
+        if not rule:
             raise HTTPException(status_code=404, detail="Rule not found")
+        
+        db.delete(rule)
+        # db.commit() is handled automatically by get_db dependency
         
         return None
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        # db.rollback() is handled automatically by get_db dependency
         raise HTTPException(status_code=500, detail=f"Failed to delete inject rule: {str(e)}")
 
 @router.get("/status", response_model=InjectStatusResponse)
@@ -240,22 +239,14 @@ def get_inject_status(db: Session = Depends(get_db)):
     """获取注入规则的启用状态摘要"""
     try:
         # 使用聚合查询统计启用/禁用规则数量
-        stmt = text("""
-            SELECT 
-                SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) as enabled_count,
-                SUM(CASE WHEN enabled = 0 THEN 1 ELSE 0 END) as disabled_count,
-                COUNT(*) as total_count
-            FROM grasp_inject_rules
-        """)
-        result = db.execute(stmt).fetchone()
-        
-        if result is None:
-            return InjectStatusResponse(rules_enabled=0, rules_disabled=0, total_rules=0)
+        enabled_count = db.query(GraspInjectRule).filter(GraspInjectRule.enabled == 1).count()
+        disabled_count = db.query(GraspInjectRule).filter(GraspInjectRule.enabled == 0).count()
+        total_count = db.query(GraspInjectRule).count()
         
         return InjectStatusResponse(
-            rules_enabled=result[0] or 0,
-            rules_disabled=result[1] or 0,
-            total_rules=result[2] or 0,
+            rules_enabled=enabled_count,
+            rules_disabled=disabled_count,
+            total_rules=total_count,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query inject status: {str(e)}")

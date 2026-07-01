@@ -1,0 +1,35 @@
+src/pages/reins/DecompositionPreview.tsx(19,10): error TS2305: Module '"@/shared/utils/api"' has no exported member 'decompositionApi'.
+src/pages/reins/DecompositionPreview.tsx(125,49): error TS7006: Parameter 'p' implicitly has an 'any' type.
+src/pages/reins/DecompositionPreview.tsx(125,52): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/pages/reins/DecompositionPreview.tsx(133,45): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/pages/reins/DecompositionPreview.tsx(142,65): error TS7006: Parameter '_' implicitly has an 'any' type.
+src/pages/reins/DecompositionPreview.tsx(142,68): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/pages/reins/goal/EvaluationDecomposeHITL.tsx(34,10): error TS2305: Module '"@/shared/utils/api"' has no exported member 'evaluationDecomposeApi'.
+src/pages/reins/goal/EvaluationDecomposeHITL.tsx(34,39): error TS2305: Module '"@/shared/utils/api"' has no exported member 'Tier0Question'.
+src/pages/reins/goal/EvaluationDecomposeHITL.tsx(34,54): error TS2305: Module '"@/shared/utils/api"' has no exported member 'goalHitlApi'.
+src/pages/reins/goal/EvaluationDecomposeHITL.tsx(124,38): error TS7006: Parameter 'opt' implicitly has an 'any' type.
+src/pages/reins/goal/EvaluationDecomposeHITL.tsx(124,43): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/pages/reins/goal/GoalList.tsx(106,29): error TS2345: Argument of type 'Record<string, number> | { goal_id: string; count: number; }' is not assignable to parameter of type 'SetStateAction<Record<string, number>>'.
+  Type '{ goal_id: string; count: number; }' is not assignable to type 'SetStateAction<Record<string, number>>'.
+    Type '{ goal_id: string; count: number; }' is not assignable to type 'Record<string, number>'.
+      Property 'goal_id' is incompatible with index signature.
+        Type 'string' is not assignable to type 'number'.
+src/pages/reins/goal/GoalList.tsx(107,29): error TS2345: Argument of type 'Record<string, { completed: number; total: number; }> | { goal_id: string; completed: number; total: number; }' is not assignable to parameter of type 'SetStateAction<Record<string, { completed: number; total: number; }>>'.
+  Type '{ goal_id: string; completed: number; total: number; }' is not assignable to type 'SetStateAction<Record<string, { completed: number; total: number; }>>'.
+    Type '{ goal_id: string; completed: number; total: number; }' is not assignable to type 'Record<string, { completed: number; total: number; }>'.
+      Property 'goal_id' is incompatible with index signature.
+        Type 'string' is not assignable to type '{ completed: number; total: number; }'.
+src/pages/reins/HITLQuestionPage.tsx(22,10): error TS2305: Module '"@/shared/utils/api"' has no exported member 'goalHitlApi'.
+src/pages/reins/HITLQuestionPage.tsx(22,28): error TS2305: Module '"@/shared/utils/api"' has no exported member 'Tier0Question'.
+src/pages/reins/HITLQuestionPage.tsx(121,40): error TS7006: Parameter 'opt' implicitly has an 'any' type.
+src/pages/reins/HITLQuestionPage.tsx(121,45): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(38,15): error TS2305: Module '"@/shared/utils/api"' has no exported member 'VerificationReport'.
+src/reins/components/GoalVerificationReports.tsx(87,22): error TS2339: Property 'createRemedialTask' does not exist on type '{ list: (params?: { status?: string | undefined; project_id?: number | undefined; priority?: string | undefined; } | undefined) => Promise<Goal[]>; get: (id: string | number) => Promise<...>; ... 24 more ...; getTree: (id: string | number) => Promise<...>; }'.
+src/reins/components/GoalVerificationReports.tsx(147,35): error TS2339: Property 'getVerificationReports' does not exist on type '{ list: (params?: { status?: string | undefined; project_id?: number | undefined; priority?: string | undefined; } | undefined) => Promise<Goal[]>; get: (id: string | number) => Promise<...>; ... 24 more ...; getTree: (id: string | number) => Promise<...>; }'.
+src/reins/components/GoalVerificationReports.tsx(197,47): error TS7006: Parameter 'gap' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(197,52): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(214,58): error TS7006: Parameter 'rec' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(214,63): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(225,57): error TS7006: Parameter 'task' implicitly has an 'any' type.
+src/reins/components/GoalVerificationReports.tsx(225,63): error TS7006: Parameter 'i' implicitly has an 'any' type.
+src/reins/components/VerificationFeedback.tsx(136,22): error TS2551: Property 'resubmitVerification' does not exist on type '{ list: (params?: { status?: string | undefined; project_id?: string | number | undefined; assigned_agent?: string | undefined; goal_id?: string | number | undefined; } | undefined) => Promise<...>; ... 44 more ...; getActivity: (taskId: string) => Promise<...>; }'. Did you mean 'getVerifications'?

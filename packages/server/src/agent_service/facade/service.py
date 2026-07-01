@@ -1,7 +1,7 @@
 """
 AgentFacade — 智能体统一门面层
 
-所有数据读写通过 Nexus REST API，不直接操作数据库：
+所有数据读写通过 Grever REST API，不直接操作数据库：
 - GET /api/v1/agents/{id}      → 获取 agent 信息
 - POST /api/v1/agents          → 注册 agent
 - DELETE /api/v1/agents/{id}  → 删除 agent
@@ -66,7 +66,7 @@ class AgentFacade:
     Agent 服务门面 — 统一入口
 
     调度层（Reins/Grasp/Evo）通过此类访问 Agent 服务。
-    所有数据操作通过 Nexus API，不直接访问数据库。
+    所有数据操作通过 Grever API，不直接访问数据库。
     """
 
     def __init__(self, registry: AgentAdapterRegistry):
@@ -102,7 +102,7 @@ class AgentFacade:
             ],
         }
 
-    # ── Agent CRUD (via Nexus API) ───────────────────────────────────────
+    # ── Agent CRUD (via Grever API) ───────────────────────────────────────
 
     async def register(self, request: AgentRegisterRequest) -> AgentRegistered:
         """
@@ -138,7 +138,7 @@ class AgentFacade:
                 f"目标平台注册返回空 agent_id: {request.platform_type}"
             )
 
-        # ── 连通性验证通过，再通过 Nexus API 注册到 DB ──
+        # ── 连通性验证通过，再通过 Grever API 注册到 DB ──
         caps = request.capability_tags or {
             "business": [], "professional": [], "technical": [], "management": [],
         }

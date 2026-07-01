@@ -46,20 +46,29 @@ def _assign_agent(db) -> Optional[str]:
         Agent UUID，如果没有在线 agent 返回 None
     """
     try:
+        # 实时从 tasks 表算 in_progress 任务数，不再依赖 current_tasks 列（会漂移）
         result = db.execute(text("""
-            SELECT id FROM agents
-            WHERE health_status = 'online'
-              AND current_tasks < max_concurrent_tasks
-            ORDER BY (current_tasks * 10 + COALESCE(load, 0)) ASC
+            SELECT a.id FROM agents a
+            WHERE a.health_status = 'online'
+              AND (
+                  SELECT COUNT(*) FROM tasks t
+                  WHERE t.assigned_agent = a.id
+                    AND t.status IN ('in_progress', 'running')
+              ) < a.max_concurrent_tasks
+            ORDER BY (
+                (SELECT COUNT(*) FROM tasks t2
+                 WHERE t2.assigned_agent = a.id AND t2.status IN ('in_progress', 'running')
+                ) * 10 + COALESCE(a.load, 0)
+            ) ASC
             LIMIT 1
         """)).fetchone()
         if result:
             return result[0]
-        # 兜底：即使满载也选一个在线的
+        # 兜底：即使满载也选一个在线的（防止死锁，但不应该走到这里）
         result = db.execute(text("""
             SELECT id FROM agents
             WHERE health_status = 'online'
-            ORDER BY (current_tasks * 10 + COALESCE(load, 0)) ASC
+            ORDER BY (COALESCE(load, 0)) ASC
             LIMIT 1
         """)).fetchone()
         if result:
@@ -197,6 +206,15 @@ class TaskAssigner:
                               WHERE a.id = t.assigned_agent 
                               AND a.health_status != 'online'
                           )
+                          -- 或已有执行者在线但任务仍为 todo（需要推进到 in_progress）
+                          OR (
+                              t.assigned_agent IS NOT NULL
+                              AND EXISTS (
+                                  SELECT 1 FROM agents a2
+                                  WHERE a2.id = t.assigned_agent
+                                    AND a2.health_status = 'online'
+                              )
+                          )
                           -- 或需要验证但尚未分配验证者
                           OR (t.needs_verification = 1 AND t.verifier_agent_id IS NULL)
                       )
@@ -233,23 +251,25 @@ class TaskAssigner:
                 agent_cache: Dict[str, Dict[str, int]] = {}
 
                 def _get_agent_slots(agent_id: str) -> Optional[int]:
-                    """获取 Agent 可用 slot 数（内存缓存）"""
+                    """获取 Agent 可用 slot 数（实时从 tasks 表算，不依赖 current_tasks 列）"""
                     if agent_id not in agent_cache:
                         row = conn.execute(text("""
-                            SELECT max_concurrent_tasks, current_tasks
-                            FROM agents WHERE id = :aid
+                            SELECT max_concurrent_tasks FROM agents WHERE id = :aid
                         """), {"aid": agent_id}).fetchone()
                         if row:
-                            agent_cache[agent_id] = {
-                                "max": row[0],
-                                "current": row[1] or 0
-                            }
+                            agent_cache[agent_id] = {"max": row[0]}
                         else:
                             agent_cache[agent_id] = None
                     if agent_cache[agent_id] is None:
                         return None
                     c = agent_cache[agent_id]
-                    return c["max"] - c["current"]
+                    # 实时从 tasks 表算 in_progress 任务数
+                    actual = conn.execute(text("""
+                        SELECT COUNT(*) FROM tasks
+                        WHERE assigned_agent = :aid
+                          AND status IN ('in_progress', 'running')
+                    """), {"aid": agent_id}).scalar()
+                    return max(0, c["max"] - (actual or 0))
 
                 def _consume_slot(agent_id: str):
                     """消耗一个 slot（内存中）"""
@@ -290,7 +310,10 @@ class TaskAssigner:
                         if not chosen_agent_id:
                             chosen_agent_id = _assign_agent(conn)
                     else:
-                        chosen_agent_id = _assign_agent(conn)
+                        # 已有执行者且在线 → 用已有 agent，不走负载选择
+                        chosen_agent_id = assigned_agent_raw
+                        if not chosen_agent_id:
+                            chosen_agent_id = _assign_agent(conn)
                     
                     if not chosen_agent_id:
                         continue  # 没有可用 Agent
@@ -318,32 +341,43 @@ class TaskAssigner:
                             "task_id": task_id,
                             "agent_id": chosen_agent_id,
                             "verifier_id": verifier_agent_id,
-                            "started_at": datetime.now(),
-                            "now": datetime.now()
+                            "started_at": int(datetime.now().timestamp()),
+                            "now": int(datetime.now().timestamp())
                         })
                         _consume_slot(chosen_agent_id)
                         assigned_count += 1
                     else:
-                        # 已有执行者（只缺验证者）→ 只分配验证者
-                        if verifier_agent_id and verifier_agent_id != existing_verifier:
-                            conn.execute(text("""
-                                UPDATE tasks
-                                SET verifier_agent_id = :verifier_id,
-                                    updated_at = :now
-                                WHERE id = :task_id
-                                  AND (verifier_agent_id IS NULL OR verifier_agent_id = '')
-                            """), {
-                                "task_id": task_id,
-                                "verifier_id": verifier_agent_id,
-                                "now": datetime.now()
-                            })
-                            logger.info(f"[TaskAssigner] Assigned verifier {verifier_agent_id} for task {task_id} (executor already set)")
-                            assigned_count += 1
+                        # 已有执行者且在线 → 推进到 in_progress（如果还是 todo）
+                        # 同时分配验证者
+                        now_ts = int(datetime.now().timestamp())
+                        conn.execute(text("""
+                            UPDATE tasks
+                            SET status = 'in_progress',
+                                verifier_agent_id = COALESCE(:verifier_id, verifier_agent_id),
+                                started_at = CASE WHEN started_at IS NULL THEN :started_at ELSE started_at END,
+                                updated_at = :now
+                            WHERE id = :task_id
+                              AND status IN ('todo', 'pending', 'waiting')
+                        """), {
+                            "task_id": task_id,
+                            "verifier_id": verifier_agent_id,
+                            "started_at": now_ts,
+                            "now": now_ts,
+                        })
+                        _consume_slot(chosen_agent_id)
+                        assigned_count += 1
+                        logger.info(f"[TaskAssigner] Dispatched existing task {task_id} to in_progress (agent={chosen_agent_id})")
 
                 # 批量更新所有被分配 Agent 的 current_tasks + load
                 updated_agents = set()
                 for aid, info in agent_cache.items():
-                    if info and info["current"] > 0:
+                    if info:
+                        # 实时从 tasks 表算 in_progress 任务数，写入 current_tasks（不再依赖内存缓存的增量）
+                        actual = conn.execute(text("""
+                            SELECT COUNT(*) FROM tasks
+                            WHERE assigned_agent = :aid
+                              AND status IN ('in_progress', 'running')
+                        """), {"aid": aid}).scalar()
                         conn.execute(text("""
                             UPDATE agents
                             SET current_tasks = :ct,
@@ -351,7 +385,7 @@ class TaskAssigner:
                             WHERE id = :aid
                         """), {
                             "aid": aid,
-                            "ct": info["current"],
+                            "ct": actual or 0,
                             "now": datetime.now()
                         })
                         update_agent_load(conn, aid)
@@ -400,6 +434,7 @@ class TaskAssigner:
                             recovery_count = recovery_count + 1,
                             started_at = NULL,
                             status = 'todo',
+                            paused_reason = NULL,
                             updated_at = :now
                         WHERE id = :task_id
                     """), {
@@ -408,33 +443,41 @@ class TaskAssigner:
                         "now": datetime.now()
                     })
 
-                    # 更新新 Agent 的 current_tasks + load
+                    # 更新新 Agent 的 current_tasks（实时从 tasks 表算 in_progress 任务数，不再手动 +1）
+                    actual_new = conn.execute(text("""
+                        SELECT COUNT(*) FROM tasks
+                        WHERE assigned_agent = :agent_id
+                          AND status IN ('in_progress', 'running')
+                    """), {"agent_id": new_agent_id}).scalar()
                     conn.execute(text("""
                         UPDATE agents
-                        SET current_tasks = current_tasks + 1,
+                        SET current_tasks = :ct,
                             updated_at = :now
                         WHERE id = :agent_id
                     """), {
                         "agent_id": new_agent_id,
+                        "ct": actual_new or 0,
                         "now": datetime.now()
                     })
-                    
-                    # 重新计算 load（通过 load_calculator 模块）
                     update_agent_load(conn, new_agent_id)
 
-                    # 如果原 Agent 存在，减少其 current_tasks + load
+                    # 如果原 Agent 存在，重新算其 current_tasks（实时从 tasks 表算）
                     if assigned_agent:
+                        actual_old = conn.execute(text("""
+                            SELECT COUNT(*) FROM tasks
+                            WHERE assigned_agent = :agent_id
+                              AND status IN ('in_progress', 'running')
+                        """), {"agent_id": assigned_agent}).scalar()
                         conn.execute(text("""
                             UPDATE agents
-                            SET current_tasks = MAX(0, current_tasks - 1),
+                            SET current_tasks = :ct,
                                 updated_at = :now
                             WHERE id = :agent_id
                         """), {
                             "agent_id": assigned_agent,
+                            "ct": actual_old or 0,
                             "now": datetime.now()
                         })
-                        
-                        # 重新计算 load（通过 load_calculator 模块）
                         update_agent_load(conn, assigned_agent)
 
                     redistributed_count += 1

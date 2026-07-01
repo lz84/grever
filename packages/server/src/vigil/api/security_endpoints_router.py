@@ -5,11 +5,36 @@ Security Endpoints Router — 安全中心告警/审计日志别名
 from loguru import logger
 from typing import Optional
 from fastapi import APIRouter, Query, HTTPException
-from sqlalchemy import text
-
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 from api.app_state import get_db_manager
 
 router = APIRouter(prefix="/api/v1", tags=["security"])
+
+# We need to create ORM models for alerts and audit_logs since they don't exist yet
+# Using raw SQLAlchemy Core for these tables as they lack ORM models
+from sqlalchemy import Table, Column, String, Integer, DateTime, MetaData, select
+
+metadata = MetaData()
+alerts_table = Table('alerts', metadata,
+    Column('id', String(36), primary_key=True),
+    Column('title', String(255)),
+    Column('description', String(1000)),
+    Column('level', String(20)),
+    Column('category', String(50)),
+    Column('status', String(20)),
+    Column('source', String(100)),
+    Column('created_at', DateTime),
+)
+
+audit_logs_table = Table('audit_logs', metadata,
+    Column('id', String(36), primary_key=True),
+    Column('operation', String(100)),
+    Column('resource_type', String(50)),
+    Column('resource_id', String(100)),
+    Column('operator', String(100)),
+    Column('created_at', DateTime),
+)
 
 @router.get("/security/alerts")
 def security_list_alerts(
@@ -24,22 +49,26 @@ def security_list_alerts(
     db = get_db_manager()
     with db.engine.connect() as conn:
         conditions = []
-        params = {"limit": limit, "offset": skip}
         if level:
-            conditions.append("level = :level")
-            params["level"] = level
+            conditions.append(alerts_table.c.level == level)
         if status:
-            conditions.append("status = :status")
-            params["status"] = status
-        where = " AND ".join(conditions) if conditions else "1=1"
-        total = conn.execute(text(f"SELECT count(*) FROM alerts WHERE {where}"), params).fetchone()[0]
-        rows = conn.execute(text(
-            f"SELECT * FROM alerts WHERE {where} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"),
-            params).fetchall()
+            conditions.append(alerts_table.c.status == status)
+        
+        query = select(alerts_table)
+        count_query = select(func.count()).select_from(alerts_table)
+        
+        if conditions:
+            query = query.where(*conditions)
+            count_query = count_query.where(*conditions)
+        
+        total = conn.execute(count_query).scalar()
+        rows = conn.execute(
+            query.order_by(alerts_table.c.created_at.desc()).limit(limit).offset(skip)
+        ).fetchall()
     return {
         "total": total,
         "alerts": [{"id": r[0], "title": r[1], "description": r[2], "level": r[3],
-                     "category": r[4], "status": r[5], "source": r[6], "created_at": r[12]} for r in rows],
+                     "category": r[4], "status": r[5], "source": r[6], "created_at": r[7]} for r in rows],
     }
 
 @router.get("/security/audit/logs")
@@ -49,12 +78,12 @@ def security_list_audit_logs(skip: int = 0, limit: int = 50):
     limit = max(1, min(200, int(limit or 50)))
     db = get_db_manager()
     with db.engine.connect() as conn:
-        total = conn.execute(text("SELECT count(*) FROM audit_logs"), {}).fetchone()[0]
-        rows = conn.execute(text(
-            f"SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT {limit} OFFSET {skip}"),
-            {}).fetchall()
+        total = conn.execute(select(func.count()).select_from(audit_logs_table)).scalar()
+        rows = conn.execute(
+            select(audit_logs_table).order_by(audit_logs_table.c.created_at.desc()).limit(limit).offset(skip)
+        ).fetchall()
     return {
         "total": total,
         "logs": [{"id": r[0], "operation": r[1], "resource_type": r[2],
-                   "resource_id": r[3], "operator": r[4], "created_at": r[7]} for r in rows],
+                   "resource_id": r[3], "operator": r[4], "created_at": r[5]} for r in rows],
     }

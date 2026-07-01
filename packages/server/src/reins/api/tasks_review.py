@@ -18,6 +18,7 @@ from models.task import Task, TaskResponse
 from models.project import Project
 from models.goal import Goal
 from reins.common.database import get_db
+from reins.scheduler.statemachine import transition_task_status
 from reins.scheduler.result_verifier import ResultVerifier
 from persistence.tables import task_activity_log
 
@@ -29,6 +30,15 @@ from reins.api.tasks_models import (
     RulingRequest,
 )
 from reins.api.tasks_helpers import _get_goal_id_from_project
+
+
+def _resolve_default_verifier(db_session):
+    """Resolve default verifier UUID from system_config."""
+    try:
+        from shared.database.agent_resolver import get_default_verifier_id
+        return get_default_verifier_id(db_session)
+    except Exception:
+        return None
 
 router = APIRouter(tags=["tasks"])
 
@@ -56,28 +66,18 @@ def review_task(task_id: str, request: ReviewTaskRequest, db: Session = Depends(
     old_status = task.status
 
     if request.action == "approve":
-        task.status = "done"
-        task.completed_at = datetime.now()
-        if not task.started_at:
-            task.started_at = task.completed_at
+        transition_task_status(
+            db, task, "done",
+            reason=f"人工审核: approve" + (f" - {request.reason}" if request.reason else ""),
+        )
         message = "任务审核通过,已标记为完成"
     else:
-        task.status = "in_progress"
-        task.result_summary = None
-        message = f"任务已驳回重做{',原因: ' + request.reason if request.reason else ''}"
-
-    task.updated_at = datetime.now()
-
-    db.execute(
-        task_activity_log.insert().values(
-            id=f"log-{uuid.uuid4().hex[:12]}",
-            task_id=str(task_id),
-            old_status=old_status,
-            new_status=task.status,
-            reason=f"人工审核: {request.action}" + (f" - {request.reason}" if request.reason else ""),
-            timestamp=datetime.now(),
+        transition_task_status(
+            db, task, "in_progress",
+            reason=f"人工审核: reject" + (f" - {request.reason}" if request.reason else ""),
+            extra={"result_summary": None},
         )
-    )
+        message = f"任务已驳回重做{',原因: ' + request.reason if request.reason else ''}"
 
     db.commit()
     db.refresh(task)
@@ -134,7 +134,7 @@ def get_effective_verifier(task_id: str, db: Session = Depends(get_db)):
         "task_verifier": task.verifier_agent_id,
         "project_verifier": None,
         "goal_verifier": None,
-        "default_verifier": "3745f1f0-b67d-4287-a10b-e71b3ff17e97"
+        "default_verifier": _resolve_default_verifier(db)
     }
 
     effective_verifier = task.verifier_agent_id
@@ -154,7 +154,7 @@ def get_effective_verifier(task_id: str, db: Session = Depends(get_db)):
                 effective_verifier = goal.verifier_agent_id
 
     if not effective_verifier:
-        effective_verifier = "3745f1f0-b67d-4287-a10b-e71b3ff17e97"
+        effective_verifier = _resolve_default_verifier(db) or "3745f1f0-b67d-4287-a10b-e71b3ff17e97"
 
     return GetEffectiveVerifierResponse(
         task_id=task_id,
@@ -268,28 +268,34 @@ def submit_ruling(task_id: str, request: RulingRequest, db: Session = Depends(ge
         "created_at": datetime.now()
     })
 
-    now = datetime.now()
     if action == "done":
-        db.execute(text("""
-            UPDATE tasks SET status = 'done', completed_at = :now,
-                ruling_comment_id = :comment_id, verification_cycle = 0, updated_at = :now
-            WHERE id = :task_id
-        """), {"now": now, "comment_id": comment_id, "task_id": task_id})
+        transition_task_status(
+            db, task, "done",
+            reason=f"人工裁决: done - {ruling_text}",
+            extra={
+                "ruling_comment_id": comment_id,
+                "verification_cycle": 0,
+            },
+        )
     elif action == "in_progress":
-        db.execute(text("""
-            UPDATE tasks SET status = 'in_progress',
-                ruling_comment_id = :comment_id, ruling_instruction = :ruling,
-                verification_cycle = 0, updated_at = :now
-            WHERE id = :task_id
-        """), {"now": now, "comment_id": comment_id, "ruling": ruling_text, "task_id": task_id})
+        transition_task_status(
+            db, task, "in_progress",
+            reason=f"人工裁决: in_progress - {ruling_text}",
+            extra={
+                "ruling_comment_id": comment_id,
+                "ruling_instruction": ruling_text,
+                "verification_cycle": 0,
+            },
+        )
     elif action == "verifying":
-        db.execute(text("""
-            UPDATE tasks SET status = 'verifying',
-                ruling_comment_id = :comment_id, updated_at = :now
-            WHERE id = :task_id
-        """), {"now": now, "comment_id": comment_id, "task_id": task_id})
+        transition_task_status(
+            db, task, "verifying",
+            reason=f"人工裁决: verifying - {ruling_text}",
+            extra={"ruling_comment_id": comment_id},
+        )
 
     db.commit()
+    db.refresh(task)
 
     return {
         "task_id": task_id,

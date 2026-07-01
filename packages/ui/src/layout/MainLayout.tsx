@@ -34,7 +34,7 @@ export default function MainLayout() {
   const location = useLocation()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  const title = routeTitles[location.pathname] || 'NexusOS'
+  const title = routeTitles[location.pathname] || 'GreverOS'
 
   return (
     <div className="min-h-screen bg-slate-50">

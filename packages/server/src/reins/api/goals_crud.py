@@ -82,6 +82,7 @@ def create_goal(request_data: Any = Body(None), db: Session = Depends(get_db)):
         workspace_type=workspace_type,
         workspace_path=workspace_path,
         capability_tags=request_data.get("capability_tags"),
+        main_agent_id=request_data.get("main_agent_id"),
     )
 
     # Set scenario_id if provided (for later instantiation)
@@ -106,6 +107,13 @@ def create_goal(request_data: Any = Body(None), db: Session = Depends(get_db)):
             # Don't fail goal creation if instantiation fails
             instantiation_result = {"error": str(e), "projects_created": 0, "tasks_created": 0}
 
+    def _serialize_dt(value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value) if value else None
+
     response = {
         "id": goal.id,
         "title": goal.title,
@@ -114,11 +122,10 @@ def create_goal(request_data: Any = Body(None), db: Session = Depends(get_db)):
         "due_date": str(goal.due_date) if goal.due_date else None,
         "status": goal.status,
         "progress": float(goal.progress) if goal.progress else 0.0,
-        "created_at": goal.created_at.isoformat() if goal.created_at else None,
-        "updated_at": goal.updated_at.isoformat() if goal.updated_at else None,
+        "created_at": _serialize_dt(goal.created_at),
+        "updated_at": _serialize_dt(goal.updated_at),
         "completed_at": None,
         "failed_at": None,
-        "project_id": None,
         "goal_id": None,
         "parent_id": None,
         "matched_scenario_id": getattr(goal, 'matched_scenario_id', None),
@@ -168,10 +175,13 @@ def update_goal_status(
     goal = db.query(Goal).filter(Goal.id == goal_id).first()
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-    goal.status = status
-    goal.updated_at = datetime.now()
-    db.commit()
-    db.refresh(goal)
+    
+    # 通过状态机更新状态
+    from reins.scheduler.statemachine import GoalStateMachine
+    fsm = GoalStateMachine(db, goal_id)
+    if not fsm.transition(status, reason="API status update", extra={"updated_at": int(datetime.now().timestamp())}):
+        raise HTTPException(status_code=400, detail=f"Invalid status transition: {goal.status} → {status}")
+    
     return goal.to_dict()
 
 @router.delete("/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)

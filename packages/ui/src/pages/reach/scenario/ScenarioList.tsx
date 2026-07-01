@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, RefreshCw, AlertCircle, Search, Star, Loader2, Plus, ChevronDown } from 'lucide-react';
+import { FileText, RefreshCw, AlertCircle, Search, Star, Loader2, Plus, ChevronDown, Trash2 } from 'lucide-react';
 import { Pagination } from '@/shared/components/ui/pagination';
 import { scenariosApi, Scenario } from '../../../shared/utils/api';
 import {
@@ -22,6 +22,14 @@ import {
   SelectValue,
 } from '@/shared/components/ui/select'
 import { executorTypeLabel } from '@/shared/utils/scenariosApi'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/components/ui/dialog'
 
 const CATEGORY_LABELS: Record<string, string> = {
   earthquake: '地震',
@@ -122,7 +130,7 @@ export default function ScenarioList() {
   const [starredIds, setStarredIds] = useState(new Set());
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('nexus_starred_scenarios');
+      const stored = localStorage.getItem('grever_starred_scenarios');
       if (stored) {
         const parsed = JSON.parse(stored);
         setStarredIds(new Set(Object.keys(parsed)));
@@ -132,7 +140,7 @@ export default function ScenarioList() {
 
   const toggleStar = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}');
+    const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}');
     if (stored[id]) {
       delete stored[id];
     } else {
@@ -148,8 +156,42 @@ export default function ScenarioList() {
         };
       }
     }
-    localStorage.setItem('nexus_starred_scenarios', JSON.stringify(stored));
+    localStorage.setItem('grever_starred_scenarios', JSON.stringify(stored));
     setStarredIds(new Set(Object.keys(stored)));
+  };
+
+  // Delete state & handler
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingScenario, setDeletingScenario] = useState<Scenario | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteClick = (scenario: Scenario, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeletingScenario(scenario);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingScenario) return;
+    setDeleting(true);
+    try {
+      await scenariosApi.delete(deletingScenario.id);
+      setScenarios(prev => prev.filter(s => s.id !== deletingScenario.id));
+      setDeleteDialogOpen(false);
+      setDeletingScenario(null);
+      // Also remove from starred if applicable
+      const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}');
+      if (stored[deletingScenario.id]) {
+        delete stored[deletingScenario.id];
+        localStorage.setItem('grever_starred_scenarios', JSON.stringify(stored));
+        setStarredIds(new Set(Object.keys(stored)));
+      }
+    } catch (err) {
+      console.error('Failed to delete scenario:', err);
+      setError('删除场景失败');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const loadScenarios = async () => {
@@ -353,6 +395,7 @@ export default function ScenarioList() {
                   <TableHead>成功率</TableHead>
                   <TableHead>平均耗时</TableHead>
                   <TableHead>使用次数</TableHead>
+                  <TableHead className="w-[80px]">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -449,6 +492,17 @@ export default function ScenarioList() {
                         <TableCell>
                           <span className="text-foreground">{scenario.usage_count}次</span>
                         </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => handleDeleteClick(scenario, e)}
+                            title="删除场景"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                       {hasRequirements && (
                         <TableRow 
@@ -499,6 +553,26 @@ export default function ScenarioList() {
           </>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除场景</DialogTitle>
+            <DialogDescription>
+              确定要删除场景"{deletingScenario?.name}"吗？此操作不可撤销。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteConfirm} disabled={deleting}>
+              {deleting ? '删除中...' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

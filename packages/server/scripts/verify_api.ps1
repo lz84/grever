@@ -71,7 +71,7 @@ function Test-Endpoint {
 }
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " Nexus API 端点验证" -ForegroundColor Cyan
+Write-Host " Grever API 端点验证" -ForegroundColor Cyan
 Write-Host " 基地址: $BaseUrl" -ForegroundColor Cyan
 Write-Host " 时间: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan

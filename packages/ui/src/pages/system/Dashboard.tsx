@@ -1,7 +1,6 @@
 ﻿import { useState, useEffect } from 'react'
-import { TRACES, DASHBOARD, HUMAN_REVIEW } from '../../shared/api/paths'
 import { Link, useNavigate } from 'react-router-dom'
-import { goalsApi, projectsApi, tasksApi, agentsApi, disputesApi } from '../../shared/utils/api'
+import { goalsApi, projectsApi, tasksApi, agentsApi, disputesApi, dashboardApi, humanReviewApi, tracesApi } from '../../shared/utils/api'
 import { scenariosApi } from '../../shared/utils/scenariosApi'
 import { getTaskStatusText, getTaskStatusBadgeClass } from '../../shared/utils/statusMap'
 import type { Goal, Project, Task, Agent } from '../../shared/utils/api'
@@ -190,9 +189,9 @@ export default function Dashboard() {
         tasksApi.list(),
         agentsApi.list(),
         disputesApi.list(),
-        fetch(TRACES.LIST + '?limit=5').then(res => res.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
-        fetch(DASHBOARD.STATS).then(res => res.json()).catch(() => null),
-        fetch(HUMAN_REVIEW.GET_STATS).then(res => res.json()).catch(() => null),
+        tracesApi.list().catch(() => []),
+        dashboardApi.stats().catch(() => null),
+        humanReviewApi.getStats().catch(() => null),
         scenariosApi.list().catch(() => ({ items: [], total: 0 })),
       ])
 
@@ -237,7 +236,10 @@ export default function Dashboard() {
       }
 
       if (workflowsData.status === 'fulfilled') {
-        setWorkflows(workflowsData.value)
+        // tracesApi returns {running: [], completed: []}, normalize to array
+        const raw = workflowsData.value
+        const wfList = Array.isArray(raw) ? raw : [...(raw.running || []), ...(raw.completed || [])]
+        setWorkflows(wfList)
         setApiFailures(prev => ({ ...prev, workflows: false }))
       } else {
         setApiFailures(prev => ({ ...prev, workflows: true }))
@@ -298,15 +300,19 @@ export default function Dashboard() {
         goalsApi.list(),
         tasksApi.list(),
         agentsApi.list(),
-        fetch(TRACES.LIST + '?limit=5').then(res => res.json()).then(d => Array.isArray(d) ? d : []).catch(() => []),
-        fetch(HUMAN_REVIEW.GET_STATS).then(res => res.json()).catch(() => null),
+        tracesApi.list().catch(() => []),
+        humanReviewApi.getStats().catch(() => null),
         scenariosApi.list().catch(() => ({ items: [], total: 0 })),
       ])
 
       if (goalsData.status === 'fulfilled') setGoals(goalsData.value)
       if (tasksData.status === 'fulfilled') setTasks(tasksData.value)
       if (agentsData.status === 'fulfilled') setAgents(agentsData.value)
-      if (workflowsData.status === 'fulfilled') setWorkflows(workflowsData.value)
+      if (workflowsData.status === 'fulfilled') {
+        const raw = workflowsData.value
+        const wfList = Array.isArray(raw) ? raw : [...(raw.running || []), ...(raw.completed || [])]
+        setWorkflows(wfList)
+      }
 
       const agentsList = agentsData.status === 'fulfilled' ? agentsData.value : []
       const tasksList = tasksData.status === 'fulfilled' ? tasksData.value : []

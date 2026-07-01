@@ -47,7 +47,7 @@ export default function ScenarioFavorites() {
   function loadStarred() {
     setLoading(true)
     try {
-      const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}')
+      const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}')
       setStarred(stored)
     } catch {
       setStarred({})
@@ -65,14 +65,14 @@ export default function ScenarioFavorites() {
   }, [starred, searchQuery])
 
   const handleUnstar = (id: string) => {
-    const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}')
+    const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}')
     delete stored[id]
-    localStorage.setItem('nexus_starred_scenarios', JSON.stringify(stored))
+    localStorage.setItem('grever_starred_scenarios', JSON.stringify(stored))
     setStarred({ ...stored })
   }
 
   const handleClearAll = () => {
-    localStorage.setItem('nexus_starred_scenarios', '{}')
+    localStorage.setItem('grever_starred_scenarios', '{}')
     setStarred({})
     setShowClearConfirm(false)
   }

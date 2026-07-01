@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { TASKS, WORKFLOWS } from '../../../shared/api/paths';
+import { WORKFLOWS } from '../../../shared/api/paths';
+import { tasksApi, workflowsApi } from '../../../shared/utils/api';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, AlertCircle, Loader2, CheckCircle, XCircle, Clock, User,
@@ -119,11 +120,11 @@ const TaskDetailPage: React.FC = () => {
       setLoading(true);
       setError(null);
       const [taskResp, activitiesResp, workflowsResp] = await Promise.all([
-        fetch(TASKS.GET(id)).then(r => r.json()),
-        fetch(TASKS.GET_ACTIVITY(id)).then(r => r.json()).catch(() => []),
-        fetch(WORKFLOWS.LIST + `?task_id=${id}&limit=10`).then(r => r.json()).catch(() => []),
+        tasksApi.get(id),
+        tasksApi.getActivity(id).catch(() => []),
+        workflowsApi.list({ task_id: id, page_size: 10 }).catch(() => []),
       ]);
-      setTask(taskResp);
+      setTask(taskResp as any as Task);
       setActivities(Array.isArray(activitiesResp) ? activitiesResp : []);
       const wfData = Array.isArray(workflowsResp) ? workflowsResp : (workflowsResp.items || []);
       setWorkflows(wfData);
@@ -141,7 +142,7 @@ const TaskDetailPage: React.FC = () => {
   async function handleRetryTask() {
     if (!id) return;
     try {
-      await fetch(TASKS.RETRY(id), { method: 'POST' });
+      await tasksApi.retryTask(id);
       fetchTaskDetails();
     } catch (e) {
       console.error('重试失败', e);
@@ -184,7 +185,7 @@ const TaskDetailPage: React.FC = () => {
         </Button>
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <span className="mono text-sm font-bold text-slate-500">#{String(task.id).slice(0, 8)}</span>
+            <span className="mono text-sm font-bold text-slate-500">#{String(task.id || '').slice(0, 8)}</span>
             <Badge className={getTaskStatusBadgeClass(task.status)}>{getTaskStatusText(task.status)}</Badge>
             <Badge variant="secondary">{task.priority || '普通'}</Badge>
           </div>

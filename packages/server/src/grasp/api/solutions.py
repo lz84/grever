@@ -16,3 +16,10 @@ router.include_router(solutions_iteration_helpers.router)
 router.include_router(solutions_extraction.router)
 router.include_router(solutions_discussion.router)
 router.include_router(solutions_iteration.router)
+
+# Re-export functions needed by goals_exploration_iteration.py
+from grasp.api.solutions_shared import (
+    auto_capture_solution,
+    compare_solutions,
+    adjust_constraints_for_next_round,
+)

@@ -1,5 +1,4 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { TASKS } from '../../../shared/api/paths';
 import { toast } from "sonner";
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
@@ -152,8 +151,7 @@ function StatusUpdateDialog({ task, onClose, onSave }: { task: Task | null; onCl
   useEffect(() => {
     if (task) {
       setStatus(task.status || '');
-      fetch(TASKS.GET_STATUSES)
-        .then(r => r.json())
+      tasksApi.getStatuses()
         .then(data => { if (Array.isArray(data)) setStatuses(data); })
         .catch(() => {
           setStatuses([
@@ -359,20 +357,20 @@ export default function TaskDetail() {
 
       // Fetch execution logs
       try {
-        const execResp = await fetch(TASKS.GET_EXECUTION_LOGS(id) + '?limit=50');
-        if (execResp.ok) { const execData = await execResp.json(); setExecutionLogs(execData.logs || []); }
+        const execData = await tasksApi.getExecutionLogs(id, 50);
+        setExecutionLogs(Array.isArray(execData) ? execData : (execData.logs || []));
       } catch { /* */ }
 
       // Fetch activity log
       try {
-        const activityResp = await fetch(TASKS.GET_ACTIVITY(id));
-        if (activityResp.ok) { const activityData = await activityResp.json(); setActivityLog(Array.isArray(activityData) ? activityData : []); }
+        const activityData = await tasksApi.getActivity(id);
+        setActivityLog(Array.isArray(activityData) ? activityData : []);
       } catch { /* */ }
 
       // Fetch effective verifier
       try {
-        const verifierResp = await fetch(TASKS.GET_VERIFIER(id));
-        if (verifierResp.ok) { const v = await verifierResp.json(); setEffectiveVerifier(v); setVerifierDraft(v.effective_verifier || ''); }
+        const v = await tasksApi.getVerifier(id);
+        setEffectiveVerifier(v); setVerifierDraft(v.effective_verifier || '');
       } catch { /* */ }
     } catch (e: any) { setError(e.message || '任务详情加载失败'); }
     finally { setLoading(false); }
@@ -684,11 +682,11 @@ export default function TaskDetail() {
                     { label: '状态', value: statusText },
                     { label: '优先级', value: mapPriority(task.priority) },
                     { label: '分配给', value: getAgentName(task.assigned_agent) || '—' },
+                    { label: '验证者', value: effectiveVerifier?.effective_verifier ? getAgentName(effectiveVerifier.effective_verifier) : '—' },
                     { label: '截止日期', value: task.due_date || '—' },
                     { label: '创建时间', value: formatDate(task.created_at) },
                     { label: '更新时间', value: formatDate(task.updated_at) },
                     { label: '重试次数', value: String(task.retry_count ?? 0) },
-                    { label: 'Agent ID', value: (task as any).agent_id || '—' },
                   ].map(row => (
                     <div key={row.label}>
                       <p className="text-xs font-medium text-slate-500">{row.label}</p>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { HUMAN_INPUT } from '../api/paths';
+import { humanInputApi } from '../utils/api';
 
 interface HumanInputTaskWidgetProps {
   taskId: string;
@@ -35,11 +35,7 @@ const HumanInputTaskWidget: React.FC<HumanInputTaskWidgetProps> = ({ taskId }) =
   const fetchHumanInputRequest = async () => {
     try {
       setLoading(true);
-      const response = await fetch(HUMAN_INPUT.GET_BY_TASK(taskId));
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await humanInputApi.getByTask(taskId);
       const requests = data.requests || [];
       // Get the most recent request for this task
       if (requests.length > 0) {

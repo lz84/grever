@@ -1,5 +1,5 @@
 """
-Nexus Reins Grasp 调用器
+Grever Reins Grasp 调用器
 负责与 Grasp 服务通信，支持熔断 + 优雅降级
 
 架构:

@@ -2,16 +2,14 @@
 import json
 from typing import Optional, List
 
-from sqlalchemy import text
-
+from models import Task, Agent, IndustryCapabilityTag
+from models import Scenario
 from reach.industry.api.industry_tag_models import (
     IndustryCapabilityTagResponse,
-    TagListResponse,
-    compute_version_change,
 )
 
 
-def _row_to_response(row) -> IndustryCapabilityTagResponse:
+def _row_to_response(row) -> "IndustryCapabilityTagResponse":
     """Convert a DB row to IndustryCapabilityTagResponse."""
     return IndustryCapabilityTagResponse(
         id=row[0], industry=row[1], tag_name=row[2], tag_name_en=row[3],
@@ -58,34 +56,45 @@ def _count_tag_references(tag_id: str, db) -> dict:
     """Count how many Tasks, Scenarios, and Agents reference a given tag_id."""
     task_count, scenario_count, agent_count = 0, 0, 0
 
-    task_rows = db.execute(text("SELECT id, title, capability_tags FROM tasks")).fetchall()
+    task_rows = db.query(Task).with_entities(Task.id, Task.title, Task.capability_tags).all()
     for row in task_rows:
-        if not row[2]: continue
+        caps = row[2]
+        if not caps:
+            continue
         try:
-            caps = json.loads(row[2]) if isinstance(row[2], str) else row[2]
-        except Exception: continue
-        if not isinstance(caps, dict): continue
+            caps = json.loads(caps) if isinstance(caps, str) else caps
+        except Exception:
+            continue
+        if not isinstance(caps, dict):
+            continue
         for dim_tags in caps.values():
             if isinstance(dim_tags, list) and tag_id in dim_tags:
                 task_count += 1
                 break
 
-    scenario_rows = db.execute(text("SELECT id, name, goal_capability_tags FROM scenarios")).fetchall()
+    scenario_rows = db.query(Scenario).with_entities(Scenario.id, Scenario.name, Scenario.goal_capability_tags).all()
     for row in scenario_rows:
-        if not row[2]: continue
+        reqs = row[2]
+        if not reqs:
+            continue
         try:
-            reqs = json.loads(row[2]) if isinstance(row[2], str) else row[2]
-        except Exception: continue
+            reqs = json.loads(reqs) if isinstance(reqs, str) else reqs
+        except Exception:
+            continue
         if isinstance(reqs, list) and tag_id in reqs:
             scenario_count += 1
 
-    agent_rows = db.execute(text("SELECT id, name, capability_tags FROM agents")).fetchall()
+    agent_rows = db.query(Agent).with_entities(Agent.id, Agent.name, Agent.capability_tags).all()
     for row in agent_rows:
-        if not row[2]: continue
+        caps = row[2]
+        if not caps:
+            continue
         try:
-            caps = json.loads(row[2]) if isinstance(row[2], str) else row[2]
-        except Exception: continue
-        if not isinstance(caps, dict): continue
+            caps = json.loads(caps) if isinstance(caps, str) else caps
+        except Exception:
+            continue
+        if not isinstance(caps, dict):
+            continue
         for dim_tags in caps.values():
             if isinstance(dim_tags, list) and tag_id in dim_tags:
                 agent_count += 1

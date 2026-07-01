@@ -3,9 +3,10 @@ import { toast } from "sonner"
 import { ConfirmDialog, confirmAction } from "@/shared/utils/notify"
 import { Link, useNavigate } from 'react-router-dom'
 import { goalsApi, projectsApi, tasksApi } from '../../../shared/utils/api'
-import type { Goal, Project, Task } from '../../../shared/utils/api'
+import type { Goal } from '../../../shared/utils/api'
 import { Target, RefreshCw, AlertCircle, Search, Plus, Loader2, Trash2, GitBranch } from 'lucide-react'
 import { getGoalStatusWithClass } from '../../../shared/utils/statusMap'
+import { getModeLabel, getDiversityLabel } from '../../../shared/utils/modeDisplay'
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/shared/components/ui/pagination'
 import {
   Table,
@@ -76,8 +77,8 @@ function formatRelativeTime(dateStr: string | null): string {
 export default function GoalList() {
   const navigate = useNavigate()
   const [goals, setGoals] = useState<Goal[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [projectCountByGoal, setProjectCountByGoal] = useState<Record<string, number>>({})
+  const [taskProgressByGoal, setTaskProgressByGoal] = useState<Record<string, { completed: number; total: number }>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -97,14 +98,31 @@ export default function GoalList() {
     try {
       setLoading(true)
       setError(null)
-      const [goalsData, projectsData, tasksData] = await Promise.all([
+      const [goalsData, projectStats, taskStats] = await Promise.all([
         goalsApi.list(),
-        projectsApi.list(),
-        tasksApi.list(),
+        projectsApi.countByGoal(),
+        tasksApi.countByGoal(),
       ])
       setGoals(goalsData)
-      setProjects(projectsData)
-      setTasks(tasksData)
+      // Normalize project stats: handle both Record and array formats
+      const projMap: Record<string, number> = {}
+      if (Array.isArray(projectStats)) {
+        projectStats.forEach((item: any) => { projMap[item.goal_id] = item.count })
+      } else {
+        Object.entries(projectStats).forEach(([k, v]) => { projMap[k] = (v as any).count ?? v })
+      }
+      setProjectCountByGoal(projMap)
+      // Normalize task stats: handle both Record and array formats
+      const taskMap: Record<string, { completed: number; total: number }> = {}
+      if (Array.isArray(taskStats)) {
+        taskStats.forEach((item: any) => { taskMap[item.goal_id] = { completed: item.completed, total: item.total } })
+      } else {
+        Object.entries(taskStats).forEach(([k, v]) => {
+          const val = v as any
+          taskMap[k] = { completed: val.completed ?? 0, total: val.total ?? 0 }
+        })
+      }
+      setTaskProgressByGoal(taskMap)
     } catch (e: any) {
       setError(e.message || '加载失败，请检查后端服务')
     } finally {
@@ -115,32 +133,6 @@ export default function GoalList() {
   useEffect(() => {
     fetchData()
   }, [])
-
-  // Compute project count per goal
-  const projectCountByGoal = useMemo(() => {
-    const map: Record<string, number> = {}
-    projects.forEach(p => {
-      if (p.goal_id) {
-        map[p.goal_id] = (map[p.goal_id] || 0) + 1
-      }
-    })
-    return map
-  }, [projects])
-
-  // Compute task progress per goal
-  const taskProgressByGoal = useMemo(() => {
-    const map: Record<string, { completed: number; total: number }> = {}
-    tasks.forEach(t => {
-      if (t.goal_id) {
-        if (!map[t.goal_id]) map[t.goal_id] = { completed: 0, total: 0 }
-        map[t.goal_id].total++
-        if (t.status === 'done' || t.status === 'completed') {
-          map[t.goal_id].completed++
-        }
-      }
-    })
-    return map
-  }, [tasks])
 
   // Filter
   const filteredGoals = useMemo(() => {
@@ -274,9 +266,8 @@ export default function GoalList() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部模式</SelectItem>
-            <SelectItem value="normal">🔄 普通模式</SelectItem>
-            <SelectItem value="exploration">🔬 探索模式</SelectItem>
-            <SelectItem value="optimization">⚙️ 优化模式</SelectItem>
+            <SelectItem value="engineering">🔧 工程模式</SelectItem>
+            <SelectItem value="research">🔬 研究模式</SelectItem>
           </SelectContent>
         </Select>
 
@@ -318,8 +309,6 @@ export default function GoalList() {
               </TableHeader>
               <TableBody>
                 {paginatedGoals.map(goal => {
-                  const projectCount = projectCountByGoal[goal.id] || 0
-                  const progress = taskProgressByGoal[goal.id]
                   const statusInfo = getGoalStatusWithClass(goal.status)
                   const priorityInfo = mapPriority(goal.priority)
                   return (
@@ -345,32 +334,28 @@ export default function GoalList() {
                       </TableCell>
                       <TableCell>
                         {(() => {
-                          const modeMap: Record<string, { icon: string; text: string }> = {
-                            normal: { icon: '🔄', text: '常规' },
-                            exploration: { icon: '🔬', text: '探索' },
-                            optimization: { icon: '⚙️', text: '迭代' },
-                          }
-                          const modeInfo = modeMap[goal.mode || 'normal']
-                          return <span>{modeInfo.icon} {modeInfo.text}</span>
+                          const label = getModeLabel(goal.mode || 'engineering')
+                          const diversity = goal.diversity ? `（${getDiversityLabel(goal.diversity)}）` : ''
+                          return <span>{label}{diversity}</span>
                         })()}
                       </TableCell>
                       <TableCell>
-                        {projectCount > 0 ? (
-                          <span className="text-foreground">{projectCount}</span>
+                        {projectCountByGoal[goal.id] > 0 ? (
+                          <span className="text-foreground">{projectCountByGoal[goal.id]}</span>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
                       <TableCell>
-                        {progress && progress.total > 0 ? (
+                        {taskProgressByGoal[goal.id] && taskProgressByGoal[goal.id].total > 0 ? (
                           <div className="flex items-center gap-2">
                             <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-blue-500 rounded-full"
-                                style={{ width: `${(progress.completed / progress.total) * 100}%` }}
+                                style={{ width: `${(taskProgressByGoal[goal.id].completed / taskProgressByGoal[goal.id].total) * 100}%` }}
                               />
                             </div>
-                            <span className="text-xs text-muted-foreground">{progress.completed}/{progress.total}</span>
+                            <span className="text-xs text-muted-foreground">{taskProgressByGoal[goal.id].completed}/{taskProgressByGoal[goal.id].total}</span>
                           </div>
                         ) : <span className="text-muted-foreground">-</span>}
                       </TableCell>

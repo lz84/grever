@@ -13,9 +13,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import text
 
-from api.app_state import get_db_manager
+from models import Gene, Task
+from reins.common.database import get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -62,31 +62,31 @@ class GeneListResponse(BaseModel):
 # 辅助函数
 # ===========================================================================
 
-GENE_COLUMNS = [
-    "id", "schema_version", "category", "signals_match", "preconditions",
-    "strategy", "constraints", "validation", "epigenetic_marks",
-    "asset_id", "created_at", "updated_at",
-]
 
-
-def _row_to_dict(row) -> dict:
-    """将 SQLAlchemy Row 转为 dict，自动解析 JSON 列和 DateTime"""
-    d = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-    for json_col in ("signals_match", "preconditions", "strategy",
-                     "constraints", "validation", "epigenetic_marks"):
-        val = d.get(json_col)
-        if isinstance(val, str):
+def _gene_to_dict(gene: Gene) -> dict:
+    """将 Gene ORM 对象转为 dict，自动解析 JSON 列"""
+    def _parse_json(value):
+        if isinstance(value, str):
             try:
-                d[json_col] = json.loads(val)
+                return json.loads(value)
             except (json.JSONDecodeError, TypeError):
-                d[json_col] = None
-        elif val is None:
-            d[json_col] = None
-    for dt_col in ("created_at", "updated_at"):
-        val = d.get(dt_col)
-        if val is not None and not isinstance(val, str):
-            d[dt_col] = str(val)
-    return d
+                return None
+        return value
+
+    return {
+        "id": gene.id,
+        "schema_version": gene.schema_version,
+        "category": gene.category,
+        "signals_match": _parse_json(gene.signals_match),
+        "preconditions": _parse_json(gene.preconditions),
+        "strategy": _parse_json(gene.strategy),
+        "constraints": _parse_json(gene.constraints),
+        "validation": _parse_json(gene.validation),
+        "epigenetic_marks": _parse_json(gene.epigenetic_marks),
+        "asset_id": gene.asset_id,
+        "created_at": gene.created_at,
+        "updated_at": gene.updated_at,
+    }
 
 
 # ===========================================================================
@@ -107,46 +107,33 @@ def list_genes(
             detail=f"Invalid category: {category}. Must be one of {VALID_CATEGORIES}",
         )
 
-    where_clauses = []
-    params: dict = {}
+    db = get_db_session()
+    try:
+        query = db.query(Gene)
+        count_query = db.query(Gene)
 
-    if category:
-        where_clauses.append("category = :category")
-        params["category"] = category
+        if category:
+            query = query.filter(Gene.category == category)
+            count_query = count_query.filter(Gene.category == category)
 
-    if asset_id:
-        where_clauses.append("asset_id = :asset_id")
-        params["asset_id"] = asset_id
+        if asset_id:
+            query = query.filter(Gene.asset_id == asset_id)
+            count_query = count_query.filter(Gene.asset_id == asset_id)
 
-    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        total = count_query.count()
 
-    cols = ", ".join(GENE_COLUMNS)
-    db = get_db_manager()
+        offset = (page - 1) * page_size
+        rows = query.order_by(Gene.created_at.desc()).offset(offset).limit(page_size).all()
+        items = [_gene_to_dict(r) for r in rows]
 
-    # 总数查询
-    count_sql = f"SELECT COUNT(*) FROM genes {where_sql}"
-    with db.engine.connect() as conn:
-        total = total = conn.execute(text(count_sql), params).scalar()
-
-    # 分页查询
-    offset = (page - 1) * page_size
-    data_sql = (
-        f"SELECT {cols} FROM genes {where_sql} "
-        "ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
-    )
-    params["limit"] = page_size
-    params["offset"] = offset
-
-    with db.engine.connect() as conn:
-        rows = rows = conn.execute(text(data_sql), params).fetchall()
-    items = [_row_to_dict(r) for r in rows]
-
-    return GeneListResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-    )
+        return GeneListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -156,19 +143,16 @@ def list_genes(
 @router.get("/{gene_id}")
 def get_gene(gene_id: str):
     """查询单个 Gene 详情，不存在则返回 404"""
-    cols = ", ".join(GENE_COLUMNS)
-    db = get_db_manager()
+    db = get_db_session()
+    try:
+        row = db.query(Gene).filter(Gene.id == gene_id).first()
 
-    with db.engine.connect() as conn:
-        row = row = conn.execute(
-        text(f"SELECT {cols} FROM genes WHERE id = :id"),
-        {"id": gene_id},
-        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Gene not found: {gene_id}")
 
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Gene not found: {gene_id}")
-
-    return _row_to_dict(row)
+        return _gene_to_dict(row)
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -187,50 +171,37 @@ def create_gene(req: GeneCreate):
         )
 
     gene_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
+    now = str(datetime.now())
 
-    db = get_db_manager()
-    with db.engine.connect() as conn:
-        conn.execute(
-        text("""
-        INSERT INTO genes (
-        id, schema_version, category, signals_match, preconditions,
-        strategy, constraints, validation, epigenetic_marks,
-        asset_id, created_at, updated_at
-        ) VALUES (
-        :id, :schema_version, :category, :signals_match, :preconditions,
-        :strategy, :constraints, :validation, :epigenetic_marks,
-        :asset_id, :created_at, :updated_at
+    db = get_db_session()
+    try:
+        new_gene = Gene(
+            id=gene_id,
+            schema_version=req.schema_version or "1.0",
+            category=req.category,
+            signals_match=json.dumps(req.signals_match, ensure_ascii=False) if req.signals_match else None,
+            preconditions=json.dumps(req.preconditions, ensure_ascii=False) if req.preconditions else None,
+            strategy=json.dumps(req.strategy, ensure_ascii=False) if req.strategy else None,
+            constraints=json.dumps(req.constraints, ensure_ascii=False) if req.constraints else None,
+            validation=json.dumps(req.validation, ensure_ascii=False) if req.validation else None,
+            epigenetic_marks=json.dumps(req.epigenetic_marks, ensure_ascii=False) if req.epigenetic_marks else None,
+            asset_id=req.asset_id,
+            created_at=now,
+            updated_at=now,
         )
-        """),
-        {
-        "id": gene_id,
-        "schema_version": req.schema_version or "1.0",
-        "category": req.category,
-        "signals_match": json.dumps(req.signals_match, ensure_ascii=False) if req.signals_match else None,
-        "preconditions": json.dumps(req.preconditions, ensure_ascii=False) if req.preconditions else None,
-        "strategy": json.dumps(req.strategy, ensure_ascii=False) if req.strategy else None,
-        "constraints": json.dumps(req.constraints, ensure_ascii=False) if req.constraints else None,
-        "validation": json.dumps(req.validation, ensure_ascii=False) if req.validation else None,
-        "epigenetic_marks": json.dumps(req.epigenetic_marks, ensure_ascii=False) if req.epigenetic_marks else None,
-        "asset_id": req.asset_id,
-        "created_at": now,
-        "updated_at": now,
-        },
-        )
-        conn.commit()
+        db.add(new_gene)
+        db.commit()
 
-    logger.info("Gene %s created (category=%s)", gene_id, req.category)
+        logger.info("Gene %s created (category=%s)", gene_id, req.category)
 
-    # 返回创建后的 Gene
-    cols = ", ".join(GENE_COLUMNS)
-    with db.engine.connect() as conn:
-        created = created = conn.execute(
-        text(f"SELECT {cols} FROM genes WHERE id = :id"),
-        {"id": gene_id},
-        ).fetchone()
-
-    return _row_to_dict(created)
+        # 返回创建后的 Gene
+        created = db.query(Gene).filter(Gene.id == gene_id).first()
+        return _gene_to_dict(created)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 # ===========================================================================
@@ -252,106 +223,101 @@ def extract_genes(req: GeneExtractRequest):
         )
 
     # 获取任务记录
-    db = get_db_manager()
-    task_ids = req.task_ids
+    db = get_db_session()
+    try:
+        task_ids = req.task_ids
 
-    if task_ids:
-        placeholders = ", ".join(f":tid{i}" for i in range(len(task_ids)))
-        task_params = {f"tid{i}": tid for i, tid in enumerate(task_ids)}
-        with db.engine.connect() as conn:
-            rows = rows = conn.execute(
-            text(f"""
-            SELECT id, title, category as task_category, assigned_agent,
-            status, result, created_at, completed_at
-            FROM tasks WHERE id IN ({placeholders})
-            """),
-            task_params,
-            ).fetchall()
-    else:
-        # 提取最近的成功/失败任务
-        with db.engine.connect() as conn:
-            rows = rows = conn.execute(
-            text("""
-            SELECT id, title, category as task_category, assigned_agent,
-            status, result, created_at, completed_at
-            FROM tasks
-            WHERE status IN ('completed', 'failed', 'timeout')
-            ORDER BY created_at DESC
-            LIMIT 100
-            """),
-            ).fetchall()
+        if task_ids:
+            rows = db.query(Task).with_entities(
+                Task.id, Task.title, Task.assigned_agent,
+                Task.status, Task.result,
+            ).filter(Task.id.in_(task_ids)).all()
+        else:
+            # 提取最近的成功/失败任务
+            rows = db.query(Task).with_entities(
+                Task.id, Task.title, Task.assigned_agent,
+                Task.status, Task.result,
+            ).filter(
+                Task.status.in_(['completed', 'failed', 'timeout'])
+            ).order_by(
+                Task.created_at.desc()
+            ).limit(100).all()
 
-    # 转换为 distiller 所需的格式
-    task_records = []
-    for r in rows:
-        record = {
-            "task_id": r.id,
-            "task_type": r.title or "unknown",
-            "task_category": r.task_category,
-            "assigned_agent": r.assigned_agent,
-            "status": r.status or "unknown",
-            "result": r.result,
+        # 转换为 distiller 所需的格式
+        task_records = []
+        for r in rows:
+            record = {
+                "task_id": r[0],
+                "task_type": r[1] or "unknown",
+                "assigned_agent": r[2],
+                "status": r[3] or "unknown",
+                "result": r[4],
+            }
+            task_records.append(record)
+
+        if not task_records:
+            return {"genes_extracted": 0, "message": "No task records found for extraction"}
+
+        # 执行提取
+        distiller = RuleDistiller(
+            min_support=req.min_support,
+            min_confidence=req.min_confidence,
+        )
+        genes = distiller.distill(task_records)
+
+        # 过滤类别
+        if req.category:
+            genes = [g for g in genes if g.category == req.category]
+
+        # 持久化提取的 Gene
+        persisted = []
+        for gene in genes:
+            gene_id = gene.id or str(uuid.uuid4())
+            now = str(datetime.now())
+
+            existing = db.query(Gene).filter(Gene.id == gene_id).first()
+            if existing:
+                existing.schema_version = gene.schema_version
+                existing.category = gene.category
+                existing.signals_match = json.dumps(gene.signals_match, ensure_ascii=False)
+                existing.preconditions = json.dumps(gene.preconditions, ensure_ascii=False)
+                existing.strategy = json.dumps(gene.strategy, ensure_ascii=False)
+                existing.constraints = json.dumps(gene.constraints, ensure_ascii=False)
+                existing.validation = json.dumps(gene.validation, ensure_ascii=False)
+                existing.epigenetic_marks = json.dumps(
+                    [m.to_dict() for m in gene.epigenetic_marks], ensure_ascii=False
+                )
+                existing.asset_id = gene.asset_id
+                existing.updated_at = now
+            else:
+                db.add(Gene(
+                    id=gene_id,
+                    schema_version=gene.schema_version,
+                    category=gene.category,
+                    signals_match=json.dumps(gene.signals_match, ensure_ascii=False),
+                    preconditions=json.dumps(gene.preconditions, ensure_ascii=False),
+                    strategy=json.dumps(gene.strategy, ensure_ascii=False),
+                    constraints=json.dumps(gene.constraints, ensure_ascii=False),
+                    validation=json.dumps(gene.validation, ensure_ascii=False),
+                    epigenetic_marks=json.dumps(
+                        [m.to_dict() for m in gene.epigenetic_marks], ensure_ascii=False
+                    ),
+                    asset_id=gene.asset_id,
+                    created_at=now,
+                    updated_at=now,
+                ))
+            persisted.append(gene_id)
+
+        db.commit()
+        logger.info("Extracted and persisted %d genes", len(persisted))
+
+        return {
+            "genes_extracted": len(persisted),
+            "gene_ids": persisted,
+            "source_tasks": len(task_records),
         }
-        task_records.append(record)
-
-    if not task_records:
-        return {"genes_extracted": 0, "message": "No task records found for extraction"}
-
-    # 执行提取
-    distiller = RuleDistiller(
-        min_support=req.min_support,
-        min_confidence=req.min_confidence,
-    )
-    genes = distiller.distill(task_records)
-
-    # 过滤类别
-    if req.category:
-        genes = [g for g in genes if g.category == req.category]
-
-    # 持久化提取的 Gene
-    persisted = []
-    for gene in genes:
-        gene_id = gene.id or str(uuid.uuid4())
-        now = datetime.now().isoformat()
-
-        with db.engine.connect() as conn:
-            conn.execute(
-            text("""
-            INSERT OR REPLACE INTO genes (
-            id, schema_version, category, signals_match, preconditions,
-            strategy, constraints, validation, epigenetic_marks,
-            asset_id, created_at, updated_at
-            ) VALUES (
-            :id, :schema_version, :category, :signals_match, :preconditions,
-            :strategy, :constraints, :validation, :epigenetic_marks,
-            :asset_id, :created_at, :updated_at
-            )
-            """),
-            {
-            "id": gene_id,
-            "schema_version": gene.schema_version,
-            "category": gene.category,
-            "signals_match": json.dumps(gene.signals_match, ensure_ascii=False),
-            "preconditions": json.dumps(gene.preconditions, ensure_ascii=False),
-            "strategy": json.dumps(gene.strategy, ensure_ascii=False),
-            "constraints": json.dumps(gene.constraints, ensure_ascii=False),
-            "validation": json.dumps(gene.validation, ensure_ascii=False),
-            "epigenetic_marks": json.dumps(
-            [m.to_dict() for m in gene.epigenetic_marks],
-            ensure_ascii=False,
-            ),
-            "asset_id": gene.asset_id,
-            "created_at": now,
-            "updated_at": now,
-            },
-            )
-            conn.commit()
-        persisted.append(gene_id)
-
-    logger.info("Extracted and persisted %d genes", len(persisted))
-
-    return {
-        "genes_extracted": len(persisted),
-        "gene_ids": persisted,
-        "source_tasks": len(task_records),
-    }
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()

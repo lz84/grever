@@ -1,5 +1,4 @@
 ﻿import { useState, useEffect } from 'react'
-import { TRACES } from '../../../shared/api/paths'
 import { useParams, Link } from 'react-router-dom'
 import { 
   ChevronLeft, CheckCircle, XCircle, PauseCircle, RotateCcw,
@@ -138,11 +137,8 @@ export default function ExecutionDetail() {
       ])
       // Sprint 85: 获取原始执行日志
       try {
-        const execLogsResp = await fetch(TRACES.GET_EXECUTION_LOGS(taskId))
-        if (execLogsResp.ok) {
-          const execLogsData = await execLogsResp.json()
-          setExecLogs(execLogsData.logs || [])
-        }
+        const execLogsData = await tracesApi.getExecutionLogs(taskId)
+        setExecLogs(Array.isArray(execLogsData) ? execLogsData : (execLogsData.logs || []))
       } catch {}
       const rawTrace = Array.isArray(traceData) ? (traceData[traceData.length - 1] || null) : traceData
       const traceItem: Trace | null = rawTrace ? {
@@ -175,16 +171,8 @@ export default function ExecutionDetail() {
       setTask(taskData)
 
       try {
-        const stepStatusResponse = await fetch(TRACES.GET_STEP_STATUS(taskId))
-        if (stepStatusResponse.ok) {
-          const stepStatusData = await stepStatusResponse.json()
-          setStepEvents(Array.isArray(stepStatusData.steps) ? stepStatusData.steps : [])
-        } else if (stepStatusResponse.status === 404) {
-          setStepEvents([])
-        } else {
-          console.warn(`获取步骤状态失败: ${stepStatusResponse.status}`)
-          setStepEvents([])
-        }
+        const stepStatusData = await tracesApi.getStepStatus(taskId)
+        setStepEvents(Array.isArray(stepStatusData?.steps) ? stepStatusData.steps : [])
       } catch (stepErr) {
         console.warn('获取步骤状态时出错:', stepErr)
         setStepEvents([])

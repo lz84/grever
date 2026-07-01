@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from models import IndustryPack
 from reins.common.database import get_db
 
 router = APIRouter(prefix="/api/v1/industry-packs", tags=["industry-pack-validate"])
@@ -47,27 +47,24 @@ async def validate_pack(
 
     返回: {valid: bool, checks: [...], issues: [...]}
     """
-    # Verify pack exists
-    pack = db.execute(
-        text("SELECT * FROM industry_packs WHERE id = :id"),
-        {"id": pack_id}
-    ).fetchone()
+    # Verify pack exists - converted to ORM
+    pack = db.query(IndustryPack).filter(IndustryPack.id == pack_id).first()
     if not pack:
         raise HTTPException(status_code=404, detail=f"Pack '{pack_id}' not found")
 
-    # Parse pack fields by column index
-    p_id = pack[0]
-    p_name = pack[1]
-    p_industry = pack[2]
-    p_version = pack[3]
-    p_description = pack[4]
-    p_status = pack[8]
-    p_pack_type = pack[11] if len(pack) > 11 else 'standard'
-    p_base_pack_id = pack[12] if len(pack) > 12 else None
-    p_format_version = pack[13] if len(pack) > 13 else '1.0'
-    p_checksum = pack[18] if len(pack) > 18 else None
-    p_source_file = pack[21] if len(pack) > 21 else None
-    p_dependencies = pack[22] if len(pack) > 22 else '[]'
+    # Access pack fields directly from ORM model
+    p_id = pack.id
+    p_name = pack.name
+    p_industry = pack.industry
+    p_version = pack.version
+    p_description = pack.description
+    p_status = pack.status
+    p_pack_type = pack.pack_type or 'standard'
+    p_base_pack_id = pack.base_pack_id
+    p_format_version = pack.format_version or '1.0'
+    p_checksum = pack.source_checksum
+    p_source_file = pack.import_source_file
+    p_dependencies = pack.dependencies or '[]'
 
     checks = []
     issues = []
@@ -151,19 +148,14 @@ async def validate_pack(
         "detail": "",
     }
 
-    content_rows = db.execute(
-        text("SELECT content_type, content_id FROM industry_pack_contents WHERE pack_id = :pack_id"),
-        {"pack_id": pack_id}
-    ).fetchall()
+    from models import Skill, KnowledgeEntry, AgentScheme
+    skill_count = db.query(Skill).filter(Skill.pack_id == pack_id).count()
+    knowledge_count = db.query(KnowledgeEntry).filter(KnowledgeEntry.pack_id == pack_id).count()
+    agent_count = db.query(AgentScheme).filter(AgentScheme.pack_id == pack_id).count()
+    total_active = skill_count + knowledge_count + agent_count
 
-    # Filter out deprecated entries
-    active_contents = [(ct, ci) for ct, ci in content_rows if not ct.startswith("_deprecated:")]
-    deprecated_contents = [(ct, ci) for ct, ci in content_rows if ct.startswith("_deprecated:")]
-
-    if len(active_contents) > 0:
-        check_contents["detail"] = f"Active contents: {len(active_contents)} (tags: {sum(1 for ct,_ in active_contents if ct == 'tag')}, scenarios: {sum(1 for ct,_ in active_contents if ct == 'scenario')}, skills: {sum(1 for ct,_ in active_contents if ct == 'skill')})"
-        if deprecated_contents:
-            check_contents["detail"] += f", Deprecated: {len(deprecated_contents)}"
+    if total_active > 0:
+        check_contents["detail"] = f"Active contents: {total_active} (skills: {skill_count}, knowledge: {knowledge_count}, agent_schemes: {agent_count})"
     else:
         check_contents["passed"] = False
         check_contents["detail"] = "No active contents found in the pack"
@@ -187,10 +179,9 @@ async def validate_pack(
     if deps:
         missing_deps = []
         for dep_id in deps:
-            dep_exists = db.execute(
-                text("SELECT id, name, version FROM industry_packs WHERE id = :id"),
-                {"id": dep_id}
-            ).fetchone()
+            dep_exists = db.query(IndustryPack.id, IndustryPack.name, IndustryPack.version).filter(
+                IndustryPack.id == dep_id
+            ).first()
             if dep_exists:
                 pass  # dependency exists
             else:
@@ -231,10 +222,9 @@ async def validate_pack(
 
     # If custom pack, check base pack compatibility
     if p_pack_type == 'custom' and p_base_pack_id:
-        base_pack = db.execute(
-            text("SELECT id, name, version, format_version FROM industry_packs WHERE id = :id"),
-            {"id": p_base_pack_id}
-        ).fetchone()
+        base_pack = db.query(IndustryPack.id, IndustryPack.name, IndustryPack.version, IndustryPack.format_version).filter(
+            IndustryPack.id == p_base_pack_id
+        ).first()
         if not base_pack:
             compat_issues.append(f"Base pack '{p_base_pack_id}' not found")
             check_compat["passed"] = False

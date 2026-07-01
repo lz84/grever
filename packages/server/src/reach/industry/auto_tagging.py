@@ -5,12 +5,13 @@
 权重衰减：定期计算，长时间未观察到的标签权重递减
 """
 
+import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-import json
 from loguru import logger
-from sqlalchemy import text
-from reins.common.database import get_db_manager
+
+from models import Agent, AgentTagWeight
+from reins.common.database import get_db_session
 
 # 权重衰减配置（天数）
 EXPIRY_DAYS = {
@@ -25,6 +26,7 @@ WEIGHT_DECAY = 0.05       # 每次tick未观察到 -0.05
 MAX_WEIGHT = 1.0
 MIN_WEIGHT = 0.0
 
+
 def observe_task_completion(agent_id: str, task_capability_tags: dict):
     """
     任务完成信号：增加对应标签的权重
@@ -36,8 +38,8 @@ def observe_task_completion(agent_id: str, task_capability_tags: dict):
     if not task_capability_tags:
         return
 
-    db_manager = get_db_manager()
-    with db_manager.engine.connect() as conn:
+    session = get_db_session()
+    try:
         now = datetime.utcnow()
 
         for dim in ["business", "professional", "technical", "management"]:
@@ -53,25 +55,30 @@ def observe_task_completion(agent_id: str, task_capability_tags: dict):
                     continue
 
                 # 查询现有权重
-                existing = conn.execute(
-                    text("SELECT weight FROM agent_tag_weights WHERE agent_id = :aid AND tag = :tag"),
-                    {"aid": agent_id, "tag": tag}
-                ).fetchone()
+                existing = session.query(AgentTagWeight).filter(
+                    AgentTagWeight.agent_id == agent_id,
+                    AgentTagWeight.tag == tag,
+                ).first()
 
                 if existing:
-                    new_weight = min(MAX_WEIGHT, existing.weight + WEIGHT_INCREMENT)
-                    conn.execute(
-                        text("UPDATE agent_tag_weights SET weight = :w, last_observed = :now WHERE agent_id = :aid AND tag = :tag"),
-                        {"w": new_weight, "now": now, "aid": agent_id, "tag": tag}
-                    )
+                    existing.weight = min(MAX_WEIGHT, existing.weight + WEIGHT_INCREMENT)
+                    existing.last_observed = now
                 else:
-                    conn.execute(
-                        text("INSERT INTO agent_tag_weights (agent_id, tag, weight, last_observed) VALUES (:aid, :tag, :w, :now)"),
-                        {"aid": agent_id, "tag": tag, "w": 0.3, "now": now}  # 首次观察从0.3开始
-                    )
+                    session.add(AgentTagWeight(
+                        agent_id=agent_id,
+                        tag=tag,
+                        weight=0.3,  # 首次观察从0.3开始
+                        last_observed=now,
+                    ))
 
-        conn.commit()
+        session.commit()
         logger.info(f"[AutoTag] Updated weights for agent {agent_id} from task completion")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 
 def decay_weights() -> Dict[str, int]:
     """
@@ -80,32 +87,31 @@ def decay_weights() -> Dict[str, int]:
     Returns:
         {"decayed_count": int, "removed_count": int}
     """
-    db_manager = get_db_manager()
+    session = get_db_session()
     decayed = 0
     removed = 0
 
-    with db_manager.engine.connect() as conn:
+    try:
         # 获取所有权重记录
-        rows = conn.execute(
-            text("SELECT agent_id, tag, weight, last_observed FROM agent_tag_weights")
-        ).fetchall()
-
+        rows = session.query(AgentTagWeight).all()
         now = datetime.utcnow()
 
-        for row in rows:
-            agent_id, tag, weight, last_observed = row
+        for weight_record in rows:
+            agent_id = weight_record.agent_id
+            tag = weight_record.tag
+            weight = weight_record.weight
+            last_observed = weight_record.last_observed
 
             # 推断标签维度（通过 agent 的 capability_tags）
-            agent_tags_raw = conn.execute(
-                text("SELECT capability_tags FROM agents WHERE id = :aid"),
-                {"aid": agent_id}
-            ).fetchone()
+            agent = session.query(Agent).with_entities(
+                Agent.capability_tags
+            ).filter(Agent.id == agent_id).first()
 
-            if not agent_tags_raw or not agent_tags_raw[0]:
+            if not agent or not agent[0]:
                 continue
 
             try:
-                agent_tags = json.loads(agent_tags_raw[0]) if isinstance(agent_tags_raw[0], str) else agent_tags_raw[0]
+                agent_tags = json.loads(agent[0]) if isinstance(agent[0], str) else agent[0]
             except Exception:
                 continue
 
@@ -133,20 +139,18 @@ def decay_weights() -> Dict[str, int]:
                 days_since = (now - last_observed).total_seconds() / 86400
                 if days_since > expiry:
                     # 过期，删除该权重记录
-                    conn.execute(
-                        text("DELETE FROM agent_tag_weights WHERE agent_id = :aid AND tag = :tag"),
-                        {"aid": agent_id, "tag": tag}
-                    )
+                    session.delete(weight_record)
                     removed += 1
                 elif days_since > expiry * 0.5:
                     # 接近过期，降低权重
-                    new_weight = max(MIN_WEIGHT, weight - WEIGHT_DECAY)
-                    conn.execute(
-                        text("UPDATE agent_tag_weights SET weight = :w WHERE agent_id = :aid AND tag = :tag"),
-                        {"w": new_weight, "aid": agent_id, "tag": tag}
-                    )
+                    weight_record.weight = max(MIN_WEIGHT, weight - WEIGHT_DECAY)
                     decayed += 1
 
-        conn.commit()
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
     return {"decayed_count": decayed, "removed_count": removed}

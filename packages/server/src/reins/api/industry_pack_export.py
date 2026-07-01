@@ -26,8 +26,8 @@ router = APIRouter(prefix="/api/v1/industry-packs", tags=["industry-packs-export
 class ExportRequest(BaseModel):
     """Request body for pack export."""
     format: str = Field(
-        default="nexus-pack",
-        description="Export format: 'nexus-pack' (zip) or 'json'",
+        default="grever-pack",
+        description="Export format: 'grever-pack' (zip) or 'json'",
     )
     include_assets: bool = Field(
         default=True,
@@ -45,11 +45,11 @@ async def export_pack(
     Export an industry pack.
 
     - **pack_id**: The ID of the pack to export.
-    - **format**: Export format - "nexus-pack" (zip) or "json".
+    - **format**: Export format - "grever-pack" (zip) or "json".
     - **include_assets**: Include actual content data.
 
     Returns:
-        - For nexus-pack: zip file download (application/zip)
+        - For grever-pack: zip file download (application/zip)
         - For json: JSON response
     """
     exporter = PackExporter(db)
@@ -71,12 +71,12 @@ async def export_pack(
             detail=str(e),
         )
 
-    if request.format == "nexus-pack":
+    if request.format == "grever-pack":
         return Response(
             content=data,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f'attachment; filename="{pack_id}.nexus-pack"',
+                "Content-Disposition": f'attachment; filename="{pack_id}.grever-pack"',
             },
         )
     else:

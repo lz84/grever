@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { MCP_SERVERS, SKILLS } from '../../shared/api/paths'
+import { mcpServersApi, skillsApi } from '../../shared/utils/api'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Search, ExternalLink, CheckCircle,
@@ -85,15 +85,14 @@ export default function CapabilitiesPage() {
   const [creating, setCreating] = useState(false)
 
   const mcpCategories = ['数据', '工具', '知识库', '自动化', '资讯']
-  const skillCategories = ['任务', '认知', '调度', 'Nexus', '验证']
+  const skillCategories = ['任务', '认知', '调度', 'Grever', '验证']
 
   const currentCategories = activeTab === 'mcp' ? mcpCategories : skillCategories
 
   // Fetch MCP servers
   async function fetchServers() {
     try {
-      const res = await fetch(MCP_SERVERS.LIST)
-      const data = await res.json()
+      const data = await mcpServersApi.list()
       setServers(data.servers || [])
     } catch {
       // ignore
@@ -103,8 +102,7 @@ export default function CapabilitiesPage() {
   // Fetch skills
   async function fetchSkills() {
     try {
-      const res = await fetch(SKILLS.LIST)
-      const data = await res.json()
+      const data = await skillsApi.list()
       setSkills(data.skills || [])
     } catch {
       // ignore
@@ -114,8 +112,7 @@ export default function CapabilitiesPage() {
   // Fetch tools for a server
   async function fetchTools(serverId: string) {
     try {
-      const res = await fetch(MCP_SERVERS.GET_TOOLS(serverId))
-      const data = await res.json()
+      const data = await mcpServersApi.getTools(serverId)
       setTools(data.tools || [])
     } catch {
       setTools([])
@@ -141,11 +138,7 @@ export default function CapabilitiesPage() {
         category: newCategory,
         tools: []
       }
-      await fetch(MCP_SERVERS.CREATE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
+      await mcpServersApi.create(body)
       setShowCreateModal(false)
       setNewName('')
       setNewDesc('')

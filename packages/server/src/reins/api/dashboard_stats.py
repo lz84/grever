@@ -5,10 +5,11 @@ Sprint 26: Dashboard 指标卡 + 实时数据刷新
 提供统一的统计数据端点，避免前端聚合计算
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from datetime import date
+from sqlalchemy import func, and_
+from datetime import date, datetime, timedelta
+from models import Task, Agent, Scenario, Goal
 
 from reins.common.database import get_db
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 @router.get("/stats")
 def get_dashboard_stats(db: Session = Depends(get_db)):
     """
-    获取 Dashboard 统计数据（优化：使用 COUNT 查询替代全表扫描）
+    获取 Dashboard 统计数据
 
     Returns:
         active_tasks: 活跃任务数 (in_progress 或 running)
@@ -30,30 +31,25 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     try:
         today = date.today().isoformat()
 
-        # 使用 COUNT 聚合查询，避免全表拉取
-        active_tasks = db.execute(text(
-            "SELECT COUNT(*) FROM tasks WHERE status IN ('in_progress', 'running')"
-        )).scalar() or 0
+        active_tasks = db.query(func.count(Task.id)).filter(
+            Task.status.in_(['in_progress', 'running'])
+        ).scalar() or 0
 
-        completed_today = db.execute(text(
-            "SELECT COUNT(*) FROM tasks WHERE status IN ('done', 'completed') AND completed_at IS NOT NULL AND DATE(completed_at) = :today"
-        ), {"today": today}).scalar() or 0
+        completed_today = db.query(func.count(Task.id)).filter(
+            Task.status.in_(['done', 'completed']),
+            Task.completed_at.isnot(None),
+            func.date(Task.completed_at) == today
+        ).scalar() or 0
 
-        online_agents = db.execute(text(
-            "SELECT COUNT(*) FROM agents WHERE status = 'running'"
-        )).scalar() or 0
+        online_agents = db.query(func.count(Agent.id)).filter(
+            Agent.status == 'online'
+        ).scalar() or 0
 
-        total_scenarios = db.execute(text(
-            "SELECT COUNT(*) FROM scenarios"
-        )).scalar() or 0
-
-        total_goals = db.execute(text(
-            "SELECT COUNT(*) FROM goals"
-        )).scalar() or 0
-
-        active_goals = db.execute(text(
-            "SELECT COUNT(*) FROM goals WHERE status IN ('in_progress', 'active')"
-        )).scalar() or 0
+        total_scenarios = db.query(func.count(Scenario.id)).scalar() or 0
+        total_goals = db.query(func.count(Goal.id)).scalar() or 0
+        active_goals = db.query(func.count(Goal.id)).filter(
+            Goal.status.in_(['in_progress', 'active'])
+        ).scalar() or 0
 
         return {
             "active_tasks": active_tasks,
@@ -64,7 +60,6 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "active_goals": active_goals,
         }
     except Exception as e:
-        # 如果表不存在，返回默认值
         return {
             "active_tasks": 0,
             "completed_today": 0,
@@ -74,3 +69,27 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             "active_goals": 0,
             "error": str(e)
         }
+
+@router.get("/stats/execution-trend")
+def get_execution_trend(days: int = Query(7, ge=1, le=30), db: Session = Depends(get_db)):
+    """
+    获取近 N 天任务完成趋势数据
+
+    Returns:
+        List of {date, count} for each of the past N days
+    """
+    try:
+        today = date.today()
+        trend = []
+        for i in range(days - 1, -1, -1):
+            day = today - timedelta(days=i)
+            day_str = day.isoformat()
+            count = db.query(func.count(Task.id)).filter(
+                Task.status.in_(['done', 'completed']),
+                Task.completed_at.isnot(None),
+                func.date(Task.completed_at) == day_str
+            ).scalar() or 0
+            trend.append({"date": day_str, "count": count})
+        return trend
+    except Exception as e:
+        return []

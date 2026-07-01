@@ -7,46 +7,40 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from reins.common.database import get_db
-from .goals_exploration_models import SetGoalModeRequest
+from models.goal import Goal
+from reins.api.goals_research_models import SetGoalModeRequest
 
 router = APIRouter(prefix="/api/v1/goals", tags=["goals-exploration"])
 
 @router.post("/{goal_id}/mode")
 def set_goal_mode(goal_id: str, req: SetGoalModeRequest, db: Session = Depends(get_db)):
     """切换目标模式"""
-    row = db.execute(
-        text("SELECT id FROM goals WHERE id = :id"),
-        {"id": goal_id}
-    ).fetchone()
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
 
-    if not row:
+    if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    if req.mode not in ("normal", "exploration", "optimization"):
+    if req.mode not in ("engineering", "research"):
         raise HTTPException(
             status_code=400,
-            detail="mode must be one of: normal, exploration, optimization"
+            detail="mode 只支持 engineering（工程模式）或 research（研究模式）"
         )
 
-    updates = {
-        "mode": req.mode,
-        "updated_at": datetime.utcnow().isoformat(),
-    }
+    goal.mode = req.mode
+    goal.updated_at = datetime.utcnow()
     if req.optimization_target is not None:
-        updates["optimization_target"] = req.optimization_target
+        goal.optimization_target = req.optimization_target
     if req.convergence_threshold is not None:
-        updates["convergence_threshold"] = req.convergence_threshold
+        goal.convergence_threshold = req.convergence_threshold
     if req.max_rounds is not None:
-        updates["max_rounds"] = req.max_rounds
+        goal.max_rounds = req.max_rounds
+    if req.diversity is not None:
+        goal.diversity = req.diversity
+    if req.portfolio_size is not None:
+        goal.portfolio_size = req.portfolio_size
 
-    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-    db.execute(
-        text(f"UPDATE goals SET {set_clause} WHERE id = :id"),
-        {**updates, "id": goal_id}
-    )
     db.commit()
 
     return {"goal_id": goal_id, "mode": req.mode, "updated": True}

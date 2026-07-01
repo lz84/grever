@@ -1,5 +1,5 @@
 """
-Nexus Reins 数据库配置
+Grever Reins 数据库配置
 支持 SQLite / PostgreSQL / MySQL
 """
 from pathlib import Path
@@ -51,7 +51,7 @@ class DatabaseConfig:
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
         """从环境变量加载配置"""
-        # 正确的 Nexus DB 路径
+        # 正确的 Grever DB 路径
         default_db = str(Path(__file__).resolve().parents[4] / "data" / "reins.db")
         return cls(
             provider=os.getenv("REINS_DB_PROVIDER", "sqlite"),

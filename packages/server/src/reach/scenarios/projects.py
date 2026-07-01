@@ -8,16 +8,16 @@ Scenario 项目/任务 CRUD 端点
 
 import json
 import uuid
+from datetime import datetime
 from typing import Optional, Union
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from reins.common.database import get_db
-
-# Import helpers from crud
+from models import ScenarioTask, Scenario
+from models.scenario import ScenarioProjectModel as ScenarioProject
 from .crud import _verify_scenario_exists, _parse_json_field
 
 router = APIRouter(tags=["scenarios"])
@@ -50,11 +50,9 @@ class TaskCreateRequest(BaseModel):
     phase_name: str
     name: str
     description: Optional[str] = None
-    agent_type: Optional[str] = None
     required_capabilities: Optional[list] = None
     dependencies: Optional[list] = None
     order_in_phase: int = 0
-    estimated_hours: Optional[float] = None
     priority: str = 'medium'
     condition_type: str = 'none'
     condition_data: Optional[dict] = None
@@ -65,111 +63,122 @@ class TaskUpdateRequest(BaseModel):
     phase_name: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
-    agent_type: Optional[str] = None
     required_capabilities: Optional[list] = None
     dependencies: Optional[list] = None
     order_in_phase: Optional[int] = None
-    estimated_hours: Optional[float] = None
     priority: Optional[str] = None
     condition_type: Optional[str] = None
     condition_data: Optional[dict] = None
     executor_type: Optional[str] = None
 
 
-def _project_row_to_dict(row):
-    return {
-        "id": row[0], "scenario_id": None, "name": row[1], "description": row[2],
-        "project_type": row[3], "condition_type": row[4],
-        "condition_data": _parse_json_field(row[5]),
-        "next_step": _parse_json_field(row[6]),
-        "capability_tags": _parse_json_field(row[7]), "order_index": row[8],
-    }
-
-
 @router.post("/{scenario_id}/projects", status_code=201)
 def create_scenario_project(scenario_id: str, data: ProjectCreateRequest, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    project_id = f"sp-{uuid.uuid4().hex[:12]}"
+
     order_index = data.order_index
-    if order_index is None:
-        row = db.execute(
-            text("SELECT COALESCE(MAX(order_index), -1) FROM scenario_projects WHERE scenario_id = :sid"),
-            {"sid": scenario_id},
-        ).fetchone()
-        order_index = (row[0] if row else -1) + 1
-    db.execute(text("""
-        INSERT INTO scenario_projects (id, scenario_id, name, description, project_type, condition_type,
-             condition_data, next_step, capability_tags, order_index)
-        VALUES (:id, :sid, :name, :desc, :ptype, :ctype, :cdata, :nstep, :ctags, :oindex)
-    """), {
-        "id": project_id, "sid": scenario_id, "name": data.name, "desc": data.description or "",
-        "ptype": data.project_type, "ctype": data.condition_type,
-        "cdata": json.dumps(data.condition_data) if data.condition_data else None,
-        "nstep": json.dumps(data.next_step) if data.next_step else None,
-        "ctags": json.dumps(data.capability_tags) if data.capability_tags else '{}',
-        "oindex": order_index,
-    })
+    if order_index is None or order_index == 0:
+        max_order = db.query(ScenarioProject).filter(
+            ScenarioProject.scenario_id == scenario_id
+        ).with_entities(
+            ScenarioProject.order_index
+        ).order_by(
+            ScenarioProject.order_index.desc()
+        ).first()
+        order_index = (max_order[0] if max_order else -1) + 1
+
+    project = ScenarioProject(
+        id=f"sp-{uuid.uuid4().hex[:12]}",
+        scenario_id=scenario_id,
+        name=data.name,
+        description=data.description or "",
+        project_type=data.project_type,
+        condition_type=data.condition_type,
+        condition_data=json.dumps(data.condition_data) if data.condition_data else None,
+        next_step=json.dumps(data.next_step) if data.next_step else None,
+        capability_tags=json.dumps(data.capability_tags) if data.capability_tags else '{}',
+        order_index=order_index,
+    )
+    db.add(project)
     db.commit()
-    row = db.execute(text(
-        "SELECT id, name, description, project_type, condition_type, condition_data, next_step, capability_tags, order_index "
-        "FROM scenario_projects WHERE id = :id"
-    ), {"id": project_id}).fetchone()
-    result = _project_row_to_dict(row)
-    result["scenario_id"] = scenario_id
-    return result
+    db.refresh(project)
+
+    return {
+        "id": project.id,
+        "scenario_id": scenario_id,
+        "name": project.name,
+        "description": project.description,
+        "project_type": project.project_type,
+        "condition_type": project.condition_type,
+        "condition_data": _parse_json_field(project.condition_data),
+        "next_step": _parse_json_field(project.next_step),
+        "capability_tags": _parse_json_field(project.capability_tags),
+        "order_index": project.order_index,
+    }
 
 
 @router.put("/{scenario_id}/projects/{project_id}")
 def update_scenario_project(scenario_id: str, project_id: str, data: ProjectUpdateRequest, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    row = db.execute(
-        text("SELECT id FROM scenario_projects WHERE id = :pid AND scenario_id = :sid"),
-        {"pid": project_id, "sid": scenario_id},
-    ).fetchone()
-    if not row:
+
+    project = db.query(ScenarioProject).filter(
+        ScenarioProject.id == project_id,
+        ScenarioProject.scenario_id == scenario_id,
+    ).first()
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    updates, params = [], {"pid": project_id}
-    for field, value in [('name', data.name), ('description', data.description),
-                          ('project_type', data.project_type), ('condition_type', data.condition_type)]:
-        if value is not None:
-            updates.append(f"{field} = :{field}")
-            params[field] = value
-    for json_field, value in [('condition_data', data.condition_data),
-                               ('next_step', data.next_step), ('capability_tags', data.capability_tags)]:
-        if value is not None:
-            updates.append(f"{json_field} = :{json_field}")
-            params[json_field] = json.dumps(value)
+
+    if data.name is not None:
+        project.name = data.name
+    if data.description is not None:
+        project.description = data.description
+    if data.project_type is not None:
+        project.project_type = data.project_type
+    if data.condition_type is not None:
+        project.condition_type = data.condition_type
+    if data.condition_data is not None:
+        project.condition_data = json.dumps(data.condition_data)
+    if data.next_step is not None:
+        project.next_step = json.dumps(data.next_step)
+    if data.capability_tags is not None:
+        project.capability_tags = json.dumps(data.capability_tags)
     if data.order_index is not None:
-        updates.append("order_index = :oindex")
-        params["oindex"] = data.order_index
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    updates.append("updated_at = CURRENT_TIMESTAMP")
-    db.execute(text(f"UPDATE scenario_projects SET {', '.join(updates)} WHERE id = :pid"), params)
+        project.order_index = data.order_index
+
+    project.updated_at = datetime.utcnow()
     db.commit()
-    row = db.execute(text(
-        "SELECT id, name, description, project_type, condition_type, condition_data, next_step, capability_tags, order_index "
-        "FROM scenario_projects WHERE id = :id"
-    ), {"id": project_id}).fetchone()
-    result = _project_row_to_dict(row)
-    result["scenario_id"] = scenario_id
-    return result
+    db.refresh(project)
+
+    return {
+        "id": project.id,
+        "scenario_id": scenario_id,
+        "name": project.name,
+        "description": project.description,
+        "project_type": project.project_type,
+        "condition_type": project.condition_type,
+        "condition_data": _parse_json_field(project.condition_data),
+        "next_step": _parse_json_field(project.next_step),
+        "capability_tags": _parse_json_field(project.capability_tags),
+        "order_index": project.order_index,
+    }
 
 
 @router.delete("/{scenario_id}/projects/{project_id}", status_code=204)
 def delete_scenario_project(scenario_id: str, project_id: str, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    row = db.execute(
-        text("SELECT id FROM scenario_projects WHERE id = :pid AND scenario_id = :sid"),
-        {"pid": project_id, "sid": scenario_id},
-    ).fetchone()
-    if not row:
+
+    project = db.query(ScenarioProject).filter(
+        ScenarioProject.id == project_id,
+        ScenarioProject.scenario_id == scenario_id,
+    ).first()
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    db.execute(text("DELETE FROM scenario_tasks WHERE project_id = :pid"), {"pid": project_id})
-    db.execute(text("DELETE FROM scenario_projects WHERE id = :pid"), {"pid": project_id})
+
+    db.query(ScenarioTask).filter(ScenarioTask.project_id == project_id).delete()
+    db.query(ScenarioProject).filter(ScenarioProject.id == project_id).delete()
     db.commit()
 
 
@@ -177,40 +186,47 @@ def delete_scenario_project(scenario_id: str, project_id: str, db: Session = Dep
 def create_scenario_task(scenario_id: str, data: TaskCreateRequest, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    row = db.execute(
-        text("SELECT id FROM scenario_projects WHERE id = :pid AND scenario_id = :sid"),
-        {"pid": data.project_id, "sid": scenario_id},
-    ).fetchone()
-    if not row:
+
+    project = db.query(ScenarioProject).filter(
+        ScenarioProject.id == data.project_id,
+        ScenarioProject.scenario_id == scenario_id,
+    ).first()
+    if not project:
         raise HTTPException(status_code=404, detail=f"Project {data.project_id} not found in this scenario")
-    task_id = f"st-{uuid.uuid4().hex[:12]}"
-    db.execute(text("""
-        INSERT INTO scenario_tasks (id, scenario_id, project_id, phase_name, name, description, agent_type,
-             required_capabilities, dependencies, order_in_phase, estimated_hours, priority, condition_type, condition_data, executor_type)
-        VALUES (:id, :sid, :pid, :phase, :name, :desc, :agent, :rcaps, :deps, :oip, :ehours, :priority, :ctype, :cdata, :executor_type)
-    """), {
-        "id": task_id, "sid": scenario_id, "pid": data.project_id, "phase": data.phase_name,
-        "name": data.name, "desc": data.description or "", "agent": data.agent_type,
-        "rcaps": json.dumps(data.required_capabilities) if data.required_capabilities else None,
-        "deps": json.dumps(data.dependencies) if data.dependencies else None,
-        "oip": data.order_in_phase, "ehours": data.estimated_hours, "priority": data.priority,
-        "ctype": data.condition_type,
-        "cdata": json.dumps(data.condition_data) if data.condition_data else None,
-        "executor_type": data.executor_type,
-    })
+
+    task = ScenarioTask(
+        id=f"st-{uuid.uuid4().hex[:12]}",
+        scenario_id=scenario_id,
+        project_id=data.project_id,
+        phase_name=data.phase_name,
+        name=data.name,
+        description=data.description or "",
+        required_capabilities=json.dumps(data.required_capabilities) if data.required_capabilities else None,
+        dependencies=json.dumps(data.dependencies) if data.dependencies else None,
+        order_in_phase=data.order_in_phase,
+        priority=data.priority,
+        condition_type=data.condition_type,
+        condition_data=json.dumps(data.condition_data) if data.condition_data else None,
+        executor_type=data.executor_type,
+    )
+    db.add(task)
     db.commit()
-    row = db.execute(text(
-        "SELECT id, scenario_id, project_id, phase_name, name, description, agent_type, "
-        "required_capabilities, dependencies, order_in_phase, estimated_hours, priority, "
-        "condition_type, condition_data, executor_type FROM scenario_tasks WHERE id = :id"
-    ), {"id": task_id}).fetchone()
+    db.refresh(task)
+
     return {
-        "id": row[0], "scenario_id": row[1], "project_id": row[2], "phase_name": row[3],
-        "name": row[4], "description": row[5], "agent_type": row[6],
-        "required_capabilities": _parse_json_field(row[7]), "dependencies": _parse_json_field(row[8]),
-        "order_in_phase": row[9], "estimated_hours": row[10], "priority": row[11],
-        "condition_type": row[12], "condition_data": _parse_json_field(row[13]),
-        "executor_type": row[14] if len(row) > 14 else 'ai',
+        "id": task.id,
+        "scenario_id": task.scenario_id,
+        "project_id": task.project_id,
+        "phase_name": task.phase_name,
+        "name": task.name,
+        "description": task.description,
+        "required_capabilities": _parse_json_field(task.required_capabilities),
+        "dependencies": _parse_json_field(task.dependencies),
+        "order_in_phase": task.order_in_phase,
+        "priority": task.priority,
+        "condition_type": task.condition_type,
+        "condition_data": _parse_json_field(task.condition_data),
+        "executor_type": task.executor_type or 'ai',
     }
 
 
@@ -218,43 +234,53 @@ def create_scenario_task(scenario_id: str, data: TaskCreateRequest, db: Session 
 def update_scenario_task(scenario_id: str, task_id: str, data: TaskUpdateRequest, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    row = db.execute(
-        text("SELECT id FROM scenario_tasks WHERE id = :tid AND scenario_id = :sid"),
-        {"tid": task_id, "sid": scenario_id},
-    ).fetchone()
-    if not row:
+
+    task = db.query(ScenarioTask).filter(
+        ScenarioTask.id == task_id,
+        ScenarioTask.scenario_id == scenario_id,
+    ).first()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    updates, params = [], {"tid": task_id}
-    for field, value in [('phase_name', data.phase_name), ('name', data.name),
-                          ('description', data.description), ('agent_type', data.agent_type),
-                          ('order_in_phase', data.order_in_phase), ('estimated_hours', data.estimated_hours),
-                          ('priority', data.priority), ('condition_type', data.condition_type),
-                          ('executor_type', data.executor_type)]:
-        if value is not None:
-            updates.append(f"{field} = :{field}")
-            params[field] = value
-    for json_field, value in [('required_capabilities', data.required_capabilities),
-                               ('dependencies', data.dependencies), ('condition_data', data.condition_data)]:
-        if value is not None:
-            updates.append(f"{json_field} = :{json_field}")
-            params[json_field] = json.dumps(value)
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    updates.append("updated_at = CURRENT_TIMESTAMP")
-    db.execute(text(f"UPDATE scenario_tasks SET {', '.join(updates)} WHERE id = :tid"), params)
+
+    if data.phase_name is not None:
+        task.phase_name = data.phase_name
+    if data.name is not None:
+        task.name = data.name
+    if data.description is not None:
+        task.description = data.description
+    if data.order_in_phase is not None:
+        task.order_in_phase = data.order_in_phase
+    if data.priority is not None:
+        task.priority = data.priority
+    if data.condition_type is not None:
+        task.condition_type = data.condition_type
+    if data.executor_type is not None:
+        task.executor_type = data.executor_type
+    if data.required_capabilities is not None:
+        task.required_capabilities = json.dumps(data.required_capabilities)
+    if data.dependencies is not None:
+        task.dependencies = json.dumps(data.dependencies)
+    if data.condition_data is not None:
+        task.condition_data = json.dumps(data.condition_data)
+
+    task.updated_at = int(datetime.utcnow().timestamp())
     db.commit()
-    row = db.execute(text(
-        "SELECT id, scenario_id, project_id, phase_name, name, description, agent_type, "
-        "required_capabilities, dependencies, order_in_phase, estimated_hours, priority, "
-        "condition_type, condition_data, executor_type FROM scenario_tasks WHERE id = :id"
-    ), {"id": task_id}).fetchone()
+    db.refresh(task)
+
     return {
-        "id": row[0], "scenario_id": row[1], "project_id": row[2], "phase_name": row[3],
-        "name": row[4], "description": row[5], "agent_type": row[6],
-        "required_capabilities": _parse_json_field(row[7]), "dependencies": _parse_json_field(row[8]),
-        "order_in_phase": row[9], "estimated_hours": row[10], "priority": row[11],
-        "condition_type": row[12], "condition_data": _parse_json_field(row[13]),
-        "executor_type": row[14] if len(row) > 14 else 'ai',
+        "id": task.id,
+        "scenario_id": task.scenario_id,
+        "project_id": task.project_id,
+        "phase_name": task.phase_name,
+        "name": task.name,
+        "description": task.description,
+        "required_capabilities": _parse_json_field(task.required_capabilities),
+        "dependencies": _parse_json_field(task.dependencies),
+        "order_in_phase": task.order_in_phase,
+        "priority": task.priority,
+        "condition_type": task.condition_type,
+        "condition_data": _parse_json_field(task.condition_data),
+        "executor_type": task.executor_type or 'ai',
     }
 
 
@@ -262,11 +288,13 @@ def update_scenario_task(scenario_id: str, task_id: str, data: TaskUpdateRequest
 def delete_scenario_task(scenario_id: str, task_id: str, db: Session = Depends(get_db)):
     if not _verify_scenario_exists(db, scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")
-    row = db.execute(
-        text("SELECT id FROM scenario_tasks WHERE id = :tid AND scenario_id = :sid"),
-        {"tid": task_id, "sid": scenario_id},
-    ).fetchone()
-    if not row:
+
+    task = db.query(ScenarioTask).filter(
+        ScenarioTask.id == task_id,
+        ScenarioTask.scenario_id == scenario_id,
+    ).first()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    db.execute(text("DELETE FROM scenario_tasks WHERE id = :tid"), {"tid": task_id})
+
+    db.delete(task)
     db.commit()

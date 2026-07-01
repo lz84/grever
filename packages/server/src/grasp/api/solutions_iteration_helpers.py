@@ -1,6 +1,9 @@
-from sqlalchemy import text
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 import json
 from fastapi import HTTPException
+from models.solution import Solution
+from models.iteration_constraint import IterationConstraint
 # -*- coding: utf-8 -*-
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -47,11 +50,13 @@ def _generate_ai_analysis(goal_id: str, iter_id: str, db: Session) -> Dict[str, 
     3. 给出建议
     """
     # 获取该 goal 下所有方案评分
-    sol_rows = db.execute(
-        text("SELECT id, round, name, score, status, is_optimal FROM solutions "
-             "WHERE goal_id = :gid ORDER BY round ASC"),
-        {"gid": goal_id}
-    ).mappings().fetchall()
+    sol_rows = db.query(Solution).filter(
+        Solution.goal_id == goal_id
+    ).order_by(Solution.round.asc()).all()
+    sol_rows = [
+        {"id": s.id, "round": s.round, "name": s.name, "score": s.score, "status": s.status, "is_optimal": s.is_optimal}
+        for s in sol_rows
+    ]
 
     if not sol_rows:
         return {
@@ -85,11 +90,10 @@ def _generate_ai_analysis(goal_id: str, iter_id: str, db: Session) -> Dict[str, 
         optimal_info = "尚未标记最优方案，建议运行多维度评分比较。"
 
     # 检查约束变化
-    cons_rows = db.execute(
-        text("SELECT round, constraints FROM iteration_constraints "
-             "WHERE goal_id = :gid ORDER BY round DESC LIMIT 2"),
-        {"gid": goal_id}
-    ).mappings().fetchall()
+    cons_rows = db.query(IterationConstraint).filter(
+        IterationConstraint.goal_id == goal_id
+    ).order_by(IterationConstraint.round.desc()).limit(2).all()
+    cons_rows = [{"round": c.round, "constraints": c.constraints} for c in cons_rows]
 
     constraint_info = ""
     if len(cons_rows) >= 2:

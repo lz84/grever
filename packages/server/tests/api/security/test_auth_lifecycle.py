@@ -524,8 +524,7 @@ class TestLoginSecurityPolicies:
             result = service.verify_token(token)
             assert result is None
         
-        logger.info("✓ Rate limiting (token validation)
-": invalid tokens rejected")
+        logger.info("✓ Rate limiting (token validation): invalid tokens rejected")
 
 
 # ============================================================================

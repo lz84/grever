@@ -6,8 +6,9 @@ from loguru import logger
 
 from fastapi import APIRouter
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+
 from reins.common.database import get_db
+from models import Goal, Solution
 
 router = APIRouter()
 
@@ -22,11 +23,11 @@ def _serialize(val):
 
 def _next_round(db: Session, goal_id: str) -> int:
     """查询某 goal 下已有的最大 round + 1"""
-    result = db.execute(
-        text("SELECT COALESCE(MAX(round), 0) + 1 FROM solutions WHERE goal_id = :gid"),
-        {"gid": goal_id}
-    ).fetchone()
-    return result[0] if result else 1
+    from sqlalchemy import func
+    max_round = db.query(func.coalesce(func.max(Solution.round), 0)).filter(
+        Solution.goal_id == goal_id
+    ).scalar()
+    return (max_round or 0) + 1
 
 def check_convergence(goal_id: str, db: Session) -> tuple[bool, str]:
     """
@@ -46,10 +47,10 @@ def check_convergence(goal_id: str, db: Session) -> tuple[bool, str]:
     import statistics
 
     # 获取该 goal 下所有方案评分
-    rows = db.execute(
-        text("SELECT score FROM solutions WHERE goal_id = :gid AND score IS NOT NULL ORDER BY score DESC"),
-        {"gid": goal_id}
-    ).fetchall()
+    rows = db.query(Solution.score).filter(
+        Solution.goal_id == goal_id,
+        Solution.score.isnot(None)
+    ).order_by(Solution.score.desc()).all()
 
     if not rows:
         return False, "无方案数据，无法判断收敛"
@@ -97,15 +98,12 @@ def _track_convergence_streak(goal_id: str, converged: bool, db: Session) -> int
     """
     # 从 goals 表的 extra_data 或专用表读取当前计数
     # 简单方式：写到一个专用 key-value 记录（用 JSON 存于 goals.extra_data）
-    row = db.execute(
-        text("SELECT extra_data FROM goals WHERE id = :gid"),
-        {"gid": goal_id}
-    ).fetchone()
-
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    
     extra: Dict[str, Any] = {}
-    if row and row[0]:
+    if goal and goal.extra_data:
         try:
-            extra = json.loads(row[0])
+            extra = json.loads(goal.extra_data)
         except (json.JSONDecodeError, TypeError):
             extra = {}
 
@@ -128,10 +126,7 @@ def _track_convergence_streak(goal_id: str, converged: bool, db: Session) -> int
         logger.info(f"[check_convergence] goal={goal_id} streak=0 (not converged)")
 
     extra_json = _serialize(extra)
-    db.execute(
-        text("UPDATE goals SET extra_data = :extra WHERE id = :gid"),
-        {"gid": goal_id, "extra": extra_json}
-    )
+    goal.extra_data = extra_json
     db.commit()
 
     return streak

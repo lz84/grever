@@ -1,9 +1,11 @@
-﻿import React, { useState, useEffect, useCallback, useMemo } from 'react'
+﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { toast } from 'sonner'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   MiniMap, Controls, Background, ReactFlow,
+  ReactFlowProvider,
   useNodesState, useEdgesState,
-  MarkerType, Node, Edge, Position,
+  MarkerType, Node, Edge, Position, Handle,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -13,6 +15,7 @@ import type { Goal, Project, Task } from '../../../shared/utils/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/components/ui/card'
 import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/shared/components/ui/toggle-group'
 import { Input } from '@/shared/components/ui/input'
 import { Textarea } from '@/shared/components/ui/textarea'
 import {
@@ -21,8 +24,12 @@ import {
 } from '@/shared/components/ui/dialog'
 import {
   ChevronDown, ChevronRight, Target, FolderKanban, ListTodo,
-  Plus, Layers, ArrowLeft, Loader2, AlertCircle, RefreshCw, Trash2, Pencil, GitBranch,
+  Plus, Layers, ArrowLeft, Loader2, AlertCircle, RefreshCw, Trash2, Pencil, GitBranch, User,
+  ChevronsLeft, ChevronsRight, PanelLeftClose, PanelRightClose, Network, Zap,
 } from 'lucide-react'
+import { getAgentName } from '../../../shared/utils/agentMap'
+import { agentsApi } from '../../../shared/utils/api'
+import type { Agent } from '../../../shared/utils/api'
 
 // ============================================================================
 // Types
@@ -108,7 +115,7 @@ function ProjectDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>{isEdit ? '编辑 Project' : '新建 Project'}</DialogTitle>
+          <DialogTitle>{isEdit ? '编辑工程' : '新建工程'}</DialogTitle>
           <DialogDescription>{isEdit ? '修改项目基本信息' : '填写项目基本信息'}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -182,7 +189,7 @@ function TaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[520px] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? '编辑 Task' : '新建 Task'}</DialogTitle>
+          <DialogTitle>{isEdit ? '编辑任务' : '新建任务'}</DialogTitle>
           <DialogDescription>{isEdit ? '修改任务信息' : '填写任务信息，可设置依赖关系'}</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -421,10 +428,91 @@ function TreeNode({
 }
 
 // ============================================================================
+// Custom DAG Node Component (ReactFlow)
+// ============================================================================
+
+function DagNode({ data }: { data: any }) {
+  const nodeType = data.type
+  const statusInfo = getStatusBadge(data.status)
+  const assignedName = data.assigned_agent ? getAgentName(data.assigned_agent) : null
+
+  const iconConfig: Record<string, { icon: React.ReactNode; color: string; bg: string; border: string; badgeBg: string }> = {
+    goal: {
+      icon: <Target className="w-3.5 h-3.5" />,
+      color: 'text-purple-700', bg: '#f5f3ff', border: '2px solid #a78bfa', badgeBg: 'bg-purple-100 text-purple-700',
+    },
+    project: {
+      icon: <FolderKanban className="w-3.5 h-3.5" />,
+      color: 'text-emerald-700', bg: data.status === 'completed' || data.status === 'done' ? '#dcfce7' : data.status === 'active' || data.status === 'in_progress' ? '#dbeafe' : '#f3f4f6',
+      border: `2px solid ${data.status === 'completed' ? '#22c55e' : data.status === 'active' ? '#3b82f6' : '#d1d5db'}`,
+      badgeBg: data.status === 'completed' || data.status === 'done' ? 'bg-green-100 text-green-700' : data.status === 'active' || data.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600',
+    },
+    task: {
+      icon: <ListTodo className="w-3.5 h-3.5" />,
+      color: 'text-blue-700', bg: data.status === 'done' || data.status === 'completed' ? '#f0fdf4' : data.status === 'in_progress' ? '#eff6ff' : '#fafafa',
+      border: `1px solid ${data.status === 'done' ? '#86efac' : data.status === 'in_progress' ? '#93c5fd' : '#e5e7eb'}`,
+      badgeBg: data.status === 'done' || data.status === 'completed' ? 'bg-green-100 text-green-700' : data.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600',
+    },
+  }
+
+  const cfg = iconConfig[nodeType] || iconConfig.task
+
+  return (
+    <div
+      style={{
+        background: cfg.bg,
+        border: cfg.border,
+        borderRadius: nodeType === 'goal' ? '10px' : nodeType === 'project' ? '8px' : '6px',
+        padding: nodeType === 'goal' ? '10px 14px' : '7px 10px',
+        minWidth: nodeType === 'goal' ? '180px' : nodeType === 'project' ? '160px' : '130px',
+        maxWidth: '240px',
+        fontSize: nodeType === 'goal' ? '13px' : '11px',
+        fontWeight: nodeType === 'goal' ? '700' : nodeType === 'project' ? '600' : '500',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        position: 'relative',
+      }}
+    >
+      {/* Source handle (right side) — for outgoing edges */}
+      <Handle type="source" position={Position.Right} style={{ background: '#94a3b8', width: 8, height: 8 }} />
+      {/* Target handle (left side) — for incoming edges */}
+      <Handle type="target" position={Position.Left} style={{ background: '#94a3b8', width: 8, height: 8 }} />
+      {/* Top row: icon + type label + status */}
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className={cfg.color}>{cfg.icon}</span>
+        <span className={`text-[9px] font-medium px-1 py-0 rounded ${cfg.badgeBg}`}>
+          {nodeType === 'goal' ? '目标' : nodeType === 'project' ? '工程' : '任务'}
+        </span>
+        <span className="text-[9px] text-slate-500 ml-auto">{statusInfo.label}</span>
+      </div>
+      {/* Name */}
+      <div className={`font-medium truncate ${cfg.color}`} style={{ fontSize: nodeType === 'goal' ? '13px' : '11px' }}>
+        {data.label}
+      </div>
+      {/* Executor (tasks only) */}
+      {nodeType === 'task' && (
+        assignedName ? (
+          <div className="flex items-center gap-1 mt-1 text-[10px] text-slate-500">
+            <User className="w-2.5 h-2.5" />
+            <span>{assignedName}</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 mt-1 text-[10px] text-amber-600">
+            <User className="w-2.5 h-2.5" />
+            <span>待分配</span>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+const dagNodeTypes = { dagNode: DagNode }
+
+// ============================================================================
 // DAG Component
 // ============================================================================
 
-function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; projects: Project[]; tasks: Task[]; dagLayoutKey: number }) {
+function DagView({ goal, projects, tasks, agents, dagLayoutKey }: { goal?: Goal | null; projects: Project[]; tasks: Task[]; agents: Agent[]; dagLayoutKey: number }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([])
 
@@ -438,20 +526,11 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
     if (goal) {
       allNodes.push({
         id: goal.id,
-        type: 'default',
+        type: 'dagNode',
         position: { x: 0, y: 0 },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         data: { label: goal.title || '未命名目标', type: 'goal', status: goal.status },
-        style: {
-          background: '#f5f3ff',
-          border: '2px solid #a78bfa',
-          borderRadius: '10px',
-          padding: '10px 16px',
-          minWidth: '180px',
-          fontSize: '14px',
-          fontWeight: '700',
-        },
       })
     }
 
@@ -459,21 +538,11 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
     projects.forEach(p => {
       allNodes.push({
         id: p.id,
-        type: 'default',
+        type: 'dagNode',
         position: { x: 0, y: 0 },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         data: { label: p.name, type: 'project', status: p.status },
-        style: {
-          background: p.status === 'completed' || p.status === 'done' ? '#dcfce7' :
-                      p.status === 'active' || p.status === 'in_progress' ? '#dbeafe' : '#f3f4f6',
-          border: `2px solid ${p.status === 'completed' ? '#22c55e' : p.status === 'active' ? '#3b82f6' : '#d1d5db'}`,
-          borderRadius: '8px',
-          padding: '8px 12px',
-          minWidth: '160px',
-          fontSize: '12px',
-          fontWeight: '600',
-        },
       })
     })
 
@@ -523,20 +592,11 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
     tasks.forEach(t => {
       allNodes.push({
         id: t.id,
-        type: 'default',
+        type: 'dagNode',
         position: { x: 0, y: 0 },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
-        data: { label: t.title || t.id, type: 'task', status: t.status },
-        style: {
-          background: t.status === 'done' || t.status === 'completed' ? '#f0fdf4' :
-                      t.status === 'in_progress' ? '#eff6ff' : '#fafafa',
-          border: `1px solid ${t.status === 'done' ? '#86efac' : t.status === 'in_progress' ? '#93c5fd' : '#e5e7eb'}`,
-          borderRadius: '6px',
-          padding: '6px 10px',
-          minWidth: '120px',
-          fontSize: '11px',
-        },
+        data: { label: t.title || t.id, type: 'task', status: t.status, assigned_agent: (t as any).assigned_agent || undefined },
       })
     })
 
@@ -667,7 +727,7 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
     })
 
     // Position nodes: layer → x (horizontal), index in layer → y (vertical)
-    const NODE_W = 200, NODE_H = 55, GAP_X = 80, GAP_Y = 16
+    const NODE_W = 200, NODE_H = 80, GAP_X = 80, GAP_Y = 20
     const positioned = dagData.nodes.map(n => {
       const l = layer[n.id]
       const layerNodes = layers[l]
@@ -685,6 +745,18 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
     setEdges(dagData.edges as any)
   }, [dagData])
 
+  // Auto-fit viewport after nodes are rendered in DOM
+  const reactFlowInstanceRef = useRef<any>(null)
+  useEffect(() => {
+    if (nodes.length > 0 && reactFlowInstanceRef.current) {
+      // Wait for DOM to render all node elements before fitting
+      const timer = setTimeout(() => {
+        reactFlowInstanceRef.current.fitView({ padding: 0.2, duration: 200 })
+      }, 150)
+      return () => clearTimeout(timer)
+    }
+  }, [nodes.length])
+
   if (dagData.nodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -694,14 +766,14 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
   }
 
   return (
-    <ReactFlow
-      key={dagLayoutKey}
-      nodes={nodes} edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      fitView
-      fitViewOptions={{ padding: 0.2 }}
-      minZoom={0.1} maxZoom={2}
+    <ReactFlowProvider>
+      <ReactFlow
+        nodes={nodes} edges={edges}
+        nodeTypes={dagNodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onInit={(instance) => { reactFlowInstanceRef.current = instance }}
+        minZoom={0.1} maxZoom={2}
       nodesDraggable={false}
       nodesConnectable={false}
       edgesFocusable={false}
@@ -714,6 +786,7 @@ function DagView({ goal, projects, tasks, dagLayoutKey }: { goal?: Goal | null; 
       <Controls className="!bg-white !shadow-md !rounded-lg" />
       <MiniMap className="!bg-white/90 !rounded-lg !shadow-md" maskColor="rgba(248,250,252,0.5)" />
     </ReactFlow>
+    </ReactFlowProvider>
   )
 }
 
@@ -728,7 +801,9 @@ export default function GoalDecomposePage() {
   const [goal, setGoal] = useState<Goal | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
+  const [decomposing, setDecomposing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
@@ -738,6 +813,8 @@ export default function GoalDecomposePage() {
   const [editDependsOnOpen, setEditDependsOnOpen] = useState(false)
   const [taskParentProject, setTaskParentProject] = useState<string | undefined>()
   const [editDependsOnItem, setEditDependsOnItem] = useState<TreeItem | null>(null)
+  // AI 询问 Dialog：有 project/task 时关闭，无数据时自动弹出
+  const [aiHelpDialogOpen, setAiHelpDialogOpen] = useState(false)
 
   // Edit dialogs
   const [editProjectOpen, setEditProjectOpen] = useState(false)
@@ -745,21 +822,24 @@ export default function GoalDecomposePage() {
   const [editProjectItem, setEditProjectItem] = useState<TreeItem | null>(null)
   const [editTaskItem, setEditTaskItem] = useState<TreeItem | null>(null)
   const [dagLayoutKey, setDagLayoutKey] = useState(0)
+  const [panelLayout, setPanelLayout] = useState<'tree' | 'split' | 'dag'>('split')
 
   const fetchData = useCallback(async () => {
     if (!goalId) return
     try {
       setLoading(true)
       setError(null)
-      const [goalsList, projectsList, tasksList] = await Promise.all([
+      const [goalsList, projectsList, tasksList, agentsList] = await Promise.all([
         goalsApi.list(),
         projectsApi.list({ goal_id: goalId }),
         tasksApi.list({ goal_id: goalId }),
+        agentsApi.list(),
       ])
       const currentGoal = goalsList.find((g: Goal) => g.id === goalId) || null
       setGoal(currentGoal)
       setProjects(projectsList)
       setTasks(tasksList)
+      setAgents(agentsList)
       // Auto-expand goal node
       if (currentGoal) setCollapsed(new Set())
     } catch (e: any) {
@@ -771,6 +851,18 @@ export default function GoalDecomposePage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  const hasDecomposition = projects.length > 0 || tasks.length > 0
+
+  // 空数据时闪一条 toast 提示
+  useEffect(() => {
+    if (!loading && !hasDecomposition) {
+      toast('还没有分解数据', {
+        description: '点击工具栏「AI 协助分解」开始生成任务结构',
+        duration: 4000,
+      })
+    }
+  }, [loading, hasDecomposition])
+
   function toggleCollapse(id: string) {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -778,6 +870,20 @@ export default function GoalDecomposePage() {
       else next.add(id)
       return next
     })
+  }
+
+  const handleAIDecompose = async () => {
+    if (!goalId) return
+    try {
+      setDecomposing(true)
+      setAiHelpDialogOpen(false)
+      await goalsApi.autoDecompose(goalId)
+      await fetchData()
+    } catch (e: any) {
+      alert('AI 分解失败: ' + (e.message || '未知错误'))
+    } finally {
+      setDecomposing(false)
+    }
   }
 
   // Build tree
@@ -981,11 +1087,12 @@ export default function GoalDecomposePage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setAiHelpDialogOpen(true)} disabled={decomposing || loading}>
+            <Zap className="w-4 h-4" />
+            AI 协助分解
+          </Button>
           <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setDagLayoutKey(k => k + 1)} title="重新布局 DAG">
-            <GitBranch className="w-4 h-4" /> 一键重排
           </Button>
         </div>
       </div>
@@ -997,56 +1104,102 @@ export default function GoalDecomposePage() {
         <span>{tasks.length} 个任务</span>
       </div>
 
+      {/* Shared Legend + Layout Toggle */}
+      <div className="flex items-center justify-between bg-white rounded-lg border border-slate-200 px-4 py-2">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="font-medium text-slate-700">图例:</span>
+          <span className="flex items-center gap-1">
+            <Target className="w-3.5 h-3.5 text-purple-500" /> 目标 Goal
+          </span>
+          <span className="flex items-center gap-1">
+            <FolderKanban className="w-3.5 h-3.5 text-emerald-500" /> 工程 Project
+          </span>
+          <span className="flex items-center gap-1">
+            <ListTodo className="w-3.5 h-3.5 text-blue-500" /> 任务 Task
+          </span>
+          <span className="border-l border-slate-200 h-4" />
+          <span className="flex items-center gap-1">
+            <User className="w-3.5 h-3.5 text-slate-500" /> 执行者
+          </span>
+          <span className="flex items-center gap-1 text-amber-600">
+            <User className="w-3.5 h-3.5" /> 待分配
+          </span>
+        </div>
+        {/* Layout toggle — ToggleGroup */}
+        <ToggleGroup value={panelLayout} onValueChange={(v) => setPanelLayout(v as any)} className="shrink-0">
+          <ToggleGroupItem value="split" className="h-7 px-2.5 text-xs gap-1">
+            <Layers className="w-3.5 h-3.5" />
+            <span>全部</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="tree" className="h-7 px-2.5 text-xs gap-1">
+            <GitBranch className="w-3.5 h-3.5" />
+            <span>树</span>
+          </ToggleGroupItem>
+          <ToggleGroupItem value="dag" className="h-7 px-2.5 text-xs gap-1">
+            <Network className="w-3.5 h-3.5" />
+            <span>图</span>
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+
       {/* Main Layout: Left Tree + Right DAG */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: '70vh' }}>
+      <div className="flex gap-2" style={{ minHeight: '70vh' }}>
+
         {/* Left: Tree */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <ListTodo className="w-4 h-4" />
-              分解树
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="px-2 pb-2 max-h-[65vh] overflow-y-auto">
-              {tree.length === 0 ? (
-                <div className="text-center py-12">
-                  <Target className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
-                  <p className="text-muted-foreground text-sm">暂无分解数据</p>
-                  <Button variant="outline" size="sm" className="mt-3" onClick={() => setProjectDialogOpen(true)}>
-                    <Plus className="w-3 h-3 mr-1" /> 创建第一个 Project
-                  </Button>
-                </div>
-              ) : (
-                tree.map(node => (
-                  <TreeNode key={node.id} node={node} depth={0}
-                    collapsed={collapsed} onToggle={toggleCollapse}
-                    onCreateTask={(projectId) => { setTaskParentProject(projectId); setTaskDialogOpen(true); }}
-                    onCreateProject={() => setProjectDialogOpen(true)}
-                    onEditDependsOn={(item) => {
-                      setEditDependsOnItem(item)
-                      setEditDependsOnOpen(true)
-                    }}
-                    onDelete={handleDelete}
-                    onEdit={handleEditItem} />
-                ))
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {(panelLayout === 'tree' || panelLayout === 'split') && (
+          <Card className="overflow-hidden flex flex-col" style={{ width: panelLayout === 'split' ? '45%' : '100%' }}>
+            <CardHeader className="pb-2 shrink-0">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <ListTodo className="w-4 h-4" />
+                分解树
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0 flex-1 overflow-hidden">
+              <div className="px-2 py-2 h-full overflow-y-auto">
+                {tree.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Target className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+                    <p className="text-muted-foreground text-sm">暂无分解数据</p>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => setAiHelpDialogOpen(true)}>
+                      <Plus className="w-3 h-3 mr-1" /> 开始分解
+                    </Button>
+                  </div>
+                ) : (
+                  tree.map(node => (
+                    <TreeNode key={node.id} node={node} depth={0}
+                      collapsed={collapsed} onToggle={toggleCollapse}
+                      onCreateTask={(projectId) => { setTaskParentProject(projectId); setTaskDialogOpen(true); }}
+                      onCreateProject={() => setProjectDialogOpen(true)}
+                      onEditDependsOn={(item) => {
+                        setEditDependsOnItem(item)
+                        setEditDependsOnOpen(true)
+                      }}
+                      onDelete={handleDelete}
+                      onEdit={handleEditItem} />
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Right: DAG */}
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Layers className="w-4 h-4" />
-              依赖关系图 (DAG)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0" style={{ height: '65vh' }}>
-            <DagView goal={goal} projects={projects} tasks={tasks} dagLayoutKey={dagLayoutKey} />
-          </CardContent>
-        </Card>
+        {(panelLayout === 'dag' || panelLayout === 'split') && (
+          <Card className="overflow-hidden flex flex-col" style={{ width: panelLayout === 'split' ? '55%' : '100%' }}>
+            <CardHeader className="pb-2 shrink-0 flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                依赖关系图 (DAG)
+              </CardTitle>
+              <Button variant="outline" size="sm" onClick={() => setDagLayoutKey(k => k + 1)} title="重新布局 DAG">
+                <GitBranch className="w-3.5 h-3.5 mr-1" /> 重新排列
+              </Button>
+            </CardHeader>
+            <CardContent className="p-0 flex-1 overflow-hidden" style={{ minHeight: '60vh' }}>
+              <DagView goal={goal} projects={projects} tasks={tasks} agents={agents} dagLayoutKey={dagLayoutKey} />
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Dialogs */}
@@ -1105,6 +1258,46 @@ export default function GoalDecomposePage() {
         } : undefined}
         isEdit
       />
+
+      {/* AI 分解询问 Dialog */}
+      <Dialog open={aiHelpDialogOpen} onOpenChange={setAiHelpDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>如何开始分解？</DialogTitle>
+            <DialogDescription>
+              基于目标描述和工作目录资料，AI 可以帮你生成任务分解结构。
+              {goal?.description && (
+                <span className="block mt-2 text-xs bg-muted rounded px-2 py-1.5 text-muted-foreground">
+                  目标描述：{goal.description.length > 80 ? goal.description.slice(0, 80) + '…' : goal.description}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 mt-2">
+            <Button
+              onClick={handleAIDecompose}
+              disabled={decomposing}
+              className="w-full"
+            >
+              {decomposing ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              ) : (
+                <Zap className="w-4 h-4 mr-2" />
+              )}
+              {decomposing ? 'AI 分解中…' : 'AI 帮助分解'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => { setAiHelpDialogOpen(false); setProjectDialogOpen(true); }}
+              disabled={decomposing}
+              className="w-full"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              我自己来，手动创建
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

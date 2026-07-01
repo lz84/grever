@@ -50,8 +50,8 @@ class Goal(Base):
     due_date = Column(DateTimeOrString(50))
     status = Column(String(50), default='draft')
     progress = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()))
+    updated_at = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()), onupdate=lambda: int(datetime.utcnow().timestamp()))
     completed_at = Column(DateTimeOrString(50))
     failed_at = Column(DateTimeOrString(50))
 
@@ -77,8 +77,14 @@ class Goal(Base):
     # Sprint 53: verifier agent
     verifier_agent_id = Column(String(32), nullable=True)
 
-    # Sprint 68: 探索模式字段
-    mode = Column(String(20), default='normal', nullable=True)
+    # Sprint 119: 主智能体（负责执行目标的主要 Agent）
+    main_agent_id = Column(String(32), nullable=True)
+
+    # Sprint 68: 执行模式字段（engineering/research）
+    mode = Column(String(20), default='engineering', nullable=True)
+    diversity = Column(String(20), default='best', nullable=True)
+    portfolio_size = Column(Integer, default=3, nullable=True)
+    original_mode = Column(String(20), nullable=True)
     optimization_target = Column(String(50), nullable=True)
     convergence_threshold = Column(Float, default=0.05, nullable=True)
     max_rounds = Column(Integer, default=10, nullable=True)
@@ -99,6 +105,10 @@ class Goal(Base):
             return None
         if isinstance(value, str):
             return value if value else None
+        if isinstance(value, int):
+            # Unix timestamp (秒) → ISO 字符串
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(value, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
         return value.isoformat()
 
     def to_dict(self):
@@ -124,7 +134,10 @@ class Goal(Base):
             'last_pull_at': self._serialize_dt(self.last_pull_at),
             'last_push_at': self._serialize_dt(self.last_push_at),
             'verifier_agent_id': getattr(self, 'verifier_agent_id', None),
-            'mode': getattr(self, 'mode', None) or 'normal',
+            'main_agent_id': getattr(self, 'main_agent_id', None),
+            'mode': getattr(self, 'mode', None) or 'engineering',
+            'diversity': getattr(self, 'diversity', None) or 'best',
+            'portfolio_size': getattr(self, 'portfolio_size', None) or 3,
             'optimization_target': getattr(self, 'optimization_target', None),
             'convergence_threshold': getattr(self, 'convergence_threshold', None) or 0.05,
             'max_rounds': getattr(self, 'max_rounds', None) or 10,
@@ -167,6 +180,8 @@ GoalUpdate = create_model(
     __base__=_GoalUpdateBase,
     capability_tags=(Optional[TypingUnion[str, TypingList[TypingAny], dict]], None),
     context_md=(Optional[str], None),  # Sprint 86: 三级上下文文档
+    diversity=(Optional[str], None),
+    portfolio_size=(Optional[int], None),
 )
 
 # Add capability_tags as dict for response
@@ -175,6 +190,11 @@ GoalResponse = create_model(
     __base__=_GoalResponseBase,
     capability_tags=(Optional[dict], {}),
     context_md=(Optional[str], None),  # Sprint 86: 三级上下文文档
+    diversity=(Optional[str], None),
+    portfolio_size=(Optional[int], None),
+    # 2026-06-11: created_at/updated_at 已改为 Integer，to_dict 返回 ISO 字符串，Response schema 覆盖为 str
+    created_at=(Optional[str], None),
+    updated_at=(Optional[str], None),
 )
 
 # GoalCreate: keep auto-generated (capability_tags as Optional[str])

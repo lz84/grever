@@ -1,4 +1,4 @@
-"""Nexus 日志引擎 — 基于 Loguru"""
+"""Grever 日志引擎 — 基于 Loguru"""
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -43,6 +43,9 @@ class LogEngine:
         # 移除默认 handler
         logger.remove()
 
+        # 给 extra 字段设默认值，避免未绑定时的 KeyError
+        logger.configure(extra={'module': '', 'trace_id': '', 'event_type': ''})
+
         # 控制台 handler (人类可读)
         logger.add(
             sys.stderr,
@@ -53,7 +56,7 @@ class LogEngine:
 
         # 结构化 JSON 文件 (机器可读)
         if json_format:
-            json_log = log_dir / 'nexus-json.log'
+            json_log = log_dir / 'grever-json.log'
             logger.add(
                 str(json_log),
                 level=level,
@@ -76,7 +79,7 @@ class LogEngine:
         )
 
         # 错误日志单独存储
-        error_log = log_dir / 'nexus-error.log'
+        error_log = log_dir / 'grever-error.log'
         logger.add(
             str(error_log),
             level='ERROR',

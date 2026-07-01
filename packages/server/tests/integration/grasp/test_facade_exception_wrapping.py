@@ -2,9 +2,9 @@
 GraspFacade 统一异常包装测试 — Sprint 101-1
 
 测试目标：
-1. 适配器异常被统一包装为 NexusException
+1. 适配器异常被统一包装为 GreverException
 2. facade 层不泄露适配器内部异常细节
-3. UnknownBackendError 是 NexusException 子类
+3. UnknownBackendError 是 GreverException 子类
 4. 各 CRUD 操作的异常处理正确
 """
 
@@ -21,7 +21,7 @@ from grasp.facade.service import GraspFacade, UnknownBackendError, _wrap_adapter
 from grasp.facade.models import CognitionInput
 from grasp.adapters.registry import AdapterRegistry
 from grasp.adapters.base import BaseGraspAdapter
-from shared.common.exceptions import NexusException, ErrorCode
+from shared.common.exceptions import GreverException, ErrorCode
 
 
 # ============================================================
@@ -51,14 +51,14 @@ def _make_facade_with_mock_adapter(mock_adapter: MagicMock) -> GraspFacade:
 
 
 # ============================================================
-# Test 1: UnknownBackendError 是 NexusException 子类
+# Test 1: UnknownBackendError 是 GreverException 子类
 # ============================================================
 
 class TestUnknownBackendError:
     def test_is_nexus_exception(self):
-        """UnknownBackendError 必须继承 NexusException"""
+        """UnknownBackendError 必须继承 GreverException"""
         err = UnknownBackendError("cog-test-123")
-        assert isinstance(err, NexusException)
+        assert isinstance(err, GreverException)
         assert err.code == ErrorCode.GRASP_BACKEND_UNAVAILABLE
         assert "cog-test-123" in err.message
         assert err.details["cognition_id"] == "cog-test-123"
@@ -87,21 +87,21 @@ class TestWrapAdapterError:
     def test_keyerror_wrapped_as_not_found(self):
         """KeyError 应包装为 GRASP_NOT_FOUND"""
         err = _wrap_adapter_error("update", KeyError("'cog-missing'"))
-        assert isinstance(err, NexusException)
+        assert isinstance(err, GreverException)
         assert err.code == ErrorCode.GRASP_NOT_FOUND
         assert "cog-missing" in err.message
 
     def test_runtimeerror_wrapped_as_backend_unavailable(self):
         """RuntimeError 应包装为 GRASP_BACKEND_UNAVAILABLE"""
         err = _wrap_adapter_error("inject", RuntimeError("cost limit reached"))
-        assert isinstance(err, NexusException)
+        assert isinstance(err, GreverException)
         assert err.code == ErrorCode.GRASP_BACKEND_UNAVAILABLE
         assert err.details["operation"] == "inject"
 
     def test_oserror_wrapped_as_operation_specific(self):
         """OSError 应按操作类型分配错误码（而非通用 GRASP_BACKEND_UNAVAILABLE）"""
         err = _wrap_adapter_error("retrieve", OSError("disk full"))
-        assert isinstance(err, NexusException)
+        assert isinstance(err, GreverException)
         assert err.code == ErrorCode.GRASP_RETRIEVE_ERROR
         assert err.details["operation"] == "retrieve"
 
@@ -140,14 +140,14 @@ class TestWrapAdapterError:
 class TestFacadeInjectException:
     @pytest.mark.asyncio
     async def test_inject_adapter_runtimeerror(self):
-        """inject 时适配器抛 RuntimeError → NexusException"""
+        """inject 时适配器抛 RuntimeError → GreverException"""
         mock = _make_mock_adapter()
         mock.inject.side_effect = RuntimeError("GraphRAG 每日成本上限已达")
         facade = _make_facade_with_mock_adapter(mock)
 
         input_data = CognitionInput(content="test content", type="what")
 
-        with pytest.raises(NexusException) as exc_info:
+        with pytest.raises(GreverException) as exc_info:
             await facade.inject(input_data)
 
         assert exc_info.value.code == ErrorCode.GRASP_BACKEND_UNAVAILABLE
@@ -156,14 +156,14 @@ class TestFacadeInjectException:
 
     @pytest.mark.asyncio
     async def test_inject_adapter_oserror(self):
-        """inject 时适配器抛 OSError → NexusException"""
+        """inject 时适配器抛 OSError → GreverException"""
         mock = _make_mock_adapter()
         mock.inject.side_effect = OSError("disk write failed")
         facade = _make_facade_with_mock_adapter(mock)
 
         input_data = CognitionInput(content="test content", type="what")
 
-        with pytest.raises(NexusException) as exc_info:
+        with pytest.raises(GreverException) as exc_info:
             await facade.inject(input_data)
 
         assert exc_info.value.code == ErrorCode.GRASP_INJECT_ERROR
@@ -176,13 +176,13 @@ class TestFacadeInjectException:
 class TestFacadeRetrieveException:
     @pytest.mark.asyncio
     async def test_retrieve_adapter_exception(self):
-        """retrieve 时适配器抛异常 → NexusException"""
+        """retrieve 时适配器抛异常 → GreverException"""
         from grasp.facade.models import RetrieveResult
         mock = _make_mock_adapter()
         mock.retrieve.side_effect = IOError("query failed")
         facade = _make_facade_with_mock_adapter(mock)
 
-        with pytest.raises(NexusException) as exc_info:
+        with pytest.raises(GreverException) as exc_info:
             await facade.retrieve(query="test")
 
         assert exc_info.value.code == ErrorCode.GRASP_RETRIEVE_ERROR
@@ -204,7 +204,7 @@ class TestFacadeUpdateException:
         # 先注入一个映射
         facade._record_backend_mapping("cog-123", "mock")
 
-        with pytest.raises(NexusException) as exc_info:
+        with pytest.raises(GreverException) as exc_info:
             await facade.update("cog-123", "new content", {})
 
         assert exc_info.value.code == ErrorCode.GRASP_NOT_FOUND
@@ -228,13 +228,13 @@ class TestFacadeUpdateException:
 class TestFacadeDeleteException:
     @pytest.mark.asyncio
     async def test_delete_adapter_exception(self):
-        """delete 时适配器抛异常 → NexusException"""
+        """delete 时适配器抛异常 → GreverException"""
         mock = _make_mock_adapter()
         mock.delete.side_effect = OSError("delete failed")
         facade = _make_facade_with_mock_adapter(mock)
         facade._record_backend_mapping("cog-del", "mock")
 
-        with pytest.raises(NexusException) as exc_info:
+        with pytest.raises(GreverException) as exc_info:
             await facade.delete("cog-del")
 
         assert exc_info.value.code == ErrorCode.GRASP_DELETE_ERROR

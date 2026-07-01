@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 
 from grasp.api.grasp_helpers import _load_cognitions, _save_cognitions
 
@@ -27,6 +27,27 @@ def _check_dangerous(content: str):
                 status_code=400,
                 detail="检测到危险内容模式，已被拒绝",
             )
+
+@router.get("/cognitions")
+def list_cognitions(
+    type: Optional[str] = Query(None, description="按类型过滤（fact/pattern/lesson/meta）"),
+    status: Optional[str] = Query(None, description="按状态过滤"),
+    domain: Optional[str] = Query(None, description="按领域过滤"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """列出所有认知（支持分页和过滤）。"""
+    cognitions = _load_cognitions()
+    if type:
+        cognitions = [c for c in cognitions if c.get("type") == type]
+    if status:
+        cognitions = [c for c in cognitions if c.get("status") == status]
+    if domain:
+        cognitions = [c for c in cognitions if c.get("domain") == domain]
+    total = len(cognitions)
+    items = sorted(cognitions, key=lambda c: c.get("created_at", ""), reverse=True)[skip:skip + limit]
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
 
 @router.get("/cognition/{cognition_id}")
 def get_cognition(cognition_id: str):

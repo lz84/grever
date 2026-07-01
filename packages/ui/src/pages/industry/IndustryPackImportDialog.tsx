@@ -1,7 +1,7 @@
 /**
  * Industry Pack Import Dialog
  * Sprint 114 F114-2: 导入对话框
- * - 拖拽上传 .nexus-pack 文件
+ * - 拖拽上传 .grever-pack 文件
  * - manifest 预览内容
  * - 策略选择（create/upsert/force）
  * - 自动安装依赖
@@ -105,7 +105,7 @@ export default function IndustryPackImportDialog({
         parsed = JSON.parse(text)
       } catch {
         // Try to extract manifest from zip-like or raw format
-        setError('文件格式无效，请上传 .nexus-pack 或 .json 文件')
+        setError('文件格式无效，请上传 .grever-pack 或 .json 文件')
         return
       }
 
@@ -219,15 +219,15 @@ export default function IndustryPackImportDialog({
             >
               <FileUp className="w-10 h-10 mx-auto mb-3 text-gray-300" />
               <p className="text-sm font-medium text-gray-600">
-                拖拽 .nexus-pack 文件到这里，或点击选择
+                拖拽 .grever-pack 文件到这里，或点击选择
               </p>
               <p className="text-xs text-gray-400 mt-1">
-                支持 .nexus-pack 和 .json 格式
+                支持 .grever-pack 和 .json 格式
               </p>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".nexus-pack,.json"
+                accept=".grever-pack,.json"
                 className="hidden"
                 onChange={handleFileSelect}
               />

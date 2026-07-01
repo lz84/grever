@@ -16,13 +16,14 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from sqlalchemy import text
 
+from reins.scheduler.statemachine import TaskStateMachine
 from .dispatch_coordinator import (
     call_complete_api,
     log_execution,
     log_activity,
 )
+from reins.common.config import MAX_RESULT_SUMMARY, MAX_RESULT_DETAIL
 
 
 async def collect_result(
@@ -82,25 +83,21 @@ async def collect_result(
             error_reason = "process_lost"
 
     # 3. 确定最终状态
-    with db.engine.connect() as _conn:
-        _row = _conn.execute(
-            text(
-                "SELECT verifier_agent_id, needs_verification, goal_id "
-                "FROM tasks WHERE id = :tid"
-            ),
-            {"tid": task_id},
-        ).fetchone()
-        _verifier_agent_id = _row.verifier_agent_id if _row else None
-        _needs_verification = bool(_row.needs_verification) if _row else False
-        _goal_id = _row.goal_id if _row else None
+    from models.task import Task
+    from models.goal import Goal
+    session = db.get_session()
+    try:
+        _task = session.query(Task).filter(Task.id == task_id).first()
+        _verifier_agent_id = _task.verifier_agent_id if _task else None
+        _needs_verification = bool(_task.needs_verification) if _task else False
+        _goal_id = _task.goal_id if _task else None
 
-    _effective_verifier = _verifier_agent_id
-    if not _effective_verifier and _goal_id:
-        _goal_row = _conn.execute(
-            text("SELECT verifier_agent_id FROM goals WHERE id = :gid"),
-            {"gid": _goal_id},
-        ).fetchone()
-        _effective_verifier = _goal_row.verifier_agent_id if _goal_row else None
+        _effective_verifier = _verifier_agent_id
+        if not _effective_verifier and _goal_id:
+            _goal = session.query(Goal).filter(Goal.id == _goal_id).first()
+            _effective_verifier = _goal.verifier_agent_id if _goal else None
+    finally:
+        session.close()
 
     if not success:
         final_status = "failed"
@@ -133,89 +130,84 @@ def _fallback_update(
     db, task_id, final_status, result_text, result_data,
     error_reason, exit_code, success, activity_reason,
 ):
-    """降级：直接更新 DB（跳过验证链路）"""
+    """降级：只写结果数据，不绕过验证。状态统一设为 review_needed。"""
     logger.warning(f"[ResultCollector] complete API failed, falling back to direct DB update for {task_id}")
     try:
+        from sqlalchemy.orm import Session
+        from models.task import Task
+        from models.execution_log import ExecutionLog
+
         now = datetime.now()
-        with db.engine.connect() as conn:
-            conn.execute(
-                text(
-                    "UPDATE tasks SET status = :status, completed_at = :now, "
-                    "result_summary = :result_summary, result = :result, "
-                    "error_message = :error_message, updated_at = :now "
-                    "WHERE id = :task_id"
+        now_ts = int(now.timestamp())
+
+        # 1. 获取任务信息（只读）
+        session = db.get_session()
+        try:
+            task = session.query(Task).filter(Task.id == task_id).first()
+            if not task:
+                logger.error(f"[ResultCollector] Task {task_id} not found for fallback update")
+                return
+
+            old_status = task.status or "todo"
+            needs_started_at = not task.started_at and old_status != "todo"
+            agent_id = task.assigned_agent if task.assigned_agent else "unknown"
+        finally:
+            session.close()
+
+        # 2. 使用状态机更新任务状态（自动写入 activity log）
+        status_for_update = "review_needed"
+        extra_data = {
+            "result_summary": (result_text or "")[:MAX_RESULT_SUMMARY],
+            "result": (result_data.get("output", "") if result_data else result_text or "")[:MAX_RESULT_DETAIL],
+            "error_message": error_reason if not success and error_reason else ("" if success else "nonzero_exit"),
+            "updated_at": now_ts,
+        }
+        if needs_started_at:
+            extra_data["started_at"] = now_ts
+
+        fsm = TaskStateMachine(db, task_id)
+        fsm.transition(status_for_update, reason="fallback 路径", extra=extra_data)
+        # 注意：TaskStateMachine.transition() 已自动写入 activity log
+
+        # 3. 写入 execution log（补充记录）
+        session = db.get_session()
+        try:
+            exec_log = ExecutionLog(
+                id=str(uuid.uuid4()),
+                task_id=task_id,
+                agent_id=agent_id,
+                action="task_complete" if success else "task_fail",
+                input=json.dumps({}),
+                output=json.dumps(
+                    {"result_summary": (result_text or "")[:MAX_RESULT_SUMMARY], "exit_code": exit_code},
+                    ensure_ascii=False,
                 ),
-                {
-                    "task_id": task_id,
-                    "status": final_status,
-                    "result_summary": (result_text or "")[:500],
-                    "result": (result_data.get("output", "") if result_data else result_text or "")[:2000],
-                    "error_message": error_reason if not success and error_reason else ("" if success else "nonzero_exit"),
-                    "now": now,
-                },
+                status="success" if success else "failed",
+                error_message=error_reason if not success else "",
+                duration_ms=1000,
+                created_at=now,
+                metadata_=json.dumps({"source": "result_collector_fallback"}, ensure_ascii=False),
             )
-            conn.execute(
-                text(
-                    "INSERT INTO task_activity_log "
-                    "(id, task_id, old_status, new_status, reason, actor, timestamp) "
-                    "VALUES (:id, :task_id, :old_status, :new_status, :reason, :actor, :timestamp)"
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "task_id": task_id,
-                    "old_status": "in_progress",
-                    "new_status": final_status,
-                    "reason": activity_reason,
-                    "actor": "system",
-                    "timestamp": now,
-                },
+            session.add(exec_log)
+            session.commit()
+            logger.info(
+                f"[ResultCollector] Fallback DB update for {task_id}: {old_status} → {status_for_update} "
+                f"(started_at={'补填' if needs_started_at else '已有'})"
             )
-            row = conn.execute(
-                text("SELECT assigned_agent FROM tasks WHERE id=:tid"),
-                {"tid": task_id},
-            ).fetchone()
-            agent_id = (row[0] if row else None) or "unknown"
-            conn.execute(
-                text(
-                    "INSERT INTO execution_logs "
-                    "(id, task_id, agent_id, action, input, output, status, "
-                    " error_message, duration_ms, created_at, metadata) "
-                    "VALUES "
-                    "(:id, :task_id, :agent_id, :action, :input, :output, :status, "
-                    " :error_message, :duration_ms, :created_at, :metadata)"
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "task_id": task_id,
-                    "agent_id": agent_id,
-                    "action": "task_complete" if success else "task_fail",
-                    "input": json.dumps({}),
-                    "output": json.dumps(
-                        {"result_summary": (result_text or "")[:500], "exit_code": exit_code},
-                        ensure_ascii=False,
-                    ),
-                    "status": "success" if success else "failed",
-                    "error_message": error_reason if not success else "",
-                    "duration_ms": 0,
-                    "created_at": now,
-                    "metadata": json.dumps({"source": "project_executor"}, ensure_ascii=False),
-                },
-            )
-            conn.commit()
-            logger.info(f"[ResultCollector] Fallback DB update for {task_id}: {final_status}")
+        finally:
+            session.close()
     except Exception as e:
-        logger.error(f"[ResultCollector] Fallback DB update failed for {task_id}: {e}")
+        logger.error(f"[ResultCollector] Fallback DB update failed for {task_id}: {e}", exc_info=True)
 
 
 def get_goal_id(db, project_id: str) -> Optional[str]:
     """获取项目关联的 goal_id"""
     try:
-        with db.engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT goal_id FROM projects WHERE id = :pid"),
-                {"pid": project_id},
-            ).fetchone()
-            return row[0] if row else None
+        from models.project import Project
+        from sqlalchemy.orm import Session
+        with Session(db.engine) as session:
+            project = session.query(Project).filter(Project.id == project_id).first()
+            return project.goal_id if project else None
     except Exception as e:
         logger.warning(f"[ResultCollector] Failed to get goal_id: {e}")
         return None
@@ -224,25 +216,21 @@ def get_goal_id(db, project_id: str) -> Optional[str]:
 def fallback_complete(db, task_id: str, result_text: str, success: bool) -> None:
     """降级：直接更新 DB（简化版）"""
     try:
-        with db.engine.connect() as conn:
-            now = datetime.now()
-            status = "done" if success else "failed"
-            error_msg = "" if success else "Execution failed"
-            conn.execute(
-                text(
-                    "UPDATE tasks SET status = :status, result_summary = :result, "
-                    "completed_at = :now, error_message = :error, updated_at = :now "
-                    "WHERE id = :task_id"
-                ),
-                {
-                    "status": status,
-                    "result": result_text[:500],
-                    "now": now,
-                    "task_id": task_id,
-                    "error": error_msg,
-                },
-            )
-            conn.commit()
-            logger.info(f"[ResultCollector] Fallback completed task {task_id}: success={success}")
+        from models.task import Task
+        from sqlalchemy.orm import Session
+        from reins.common.config import MAX_RESULT_SUMMARY
+        now = datetime.now()
+        status = "done" if success else "failed"
+        error_msg = "" if success else "Execution failed"
+        with Session(db.engine) as session:
+            session.query(Task).filter(Task.id == task_id).update({
+                "status": status,
+                "result_summary": result_text[:MAX_RESULT_SUMMARY] if result_text else "",
+                "completed_at": now,
+                "error_message": error_msg,
+                "updated_at": now,
+            })
+            session.commit()
+        logger.info(f"[ResultCollector] Fallback completed task {task_id}: success={success}")
     except Exception as e:
         logger.error(f"[ResultCollector] Failed to fallback complete task {task_id}: {e}")

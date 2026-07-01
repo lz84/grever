@@ -54,7 +54,6 @@ class ScenarioStep(BaseModel):
     """协作步骤（别名，兼容旧代码）"""
     order: int
     name: str
-    agent_type: Optional[str] = None
     required_capabilities: Optional[List[str]] = None
 
 class ScenarioProjectTask(BaseModel):
@@ -62,11 +61,9 @@ class ScenarioProjectTask(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
-    agent_type: Optional[str] = None
     required_capabilities: Optional[Any] = None
     dependencies: Optional[Any] = None
     order_in_phase: int = 0
-    estimated_hours: Optional[float] = None
     priority: str = 'medium'
     condition_type: str = 'none'
     condition_data: Optional[str] = None
@@ -78,7 +75,6 @@ class ScenarioProject(BaseModel):
     name: str
     description: Optional[str] = None
     order: int
-    agent_type: Optional[str] = None
     required_capabilities: Optional[Any] = None
     condition_type: str = 'none'
     condition_data: Optional[Any] = None
@@ -457,11 +453,9 @@ class ScenarioTask(Base):
     phase_name = Column(String(100), nullable=False, index=True)  # 所属阶段名称（兼容旧数据）
     name = Column(String(255), nullable=False)  # 原名: task_name
     description = Column(Text, nullable=True)  # 原名: task_description
-    agent_type = Column(String(100), nullable=True)
     required_capabilities = Column(JSON, nullable=True)  # 能力列表
     dependencies = Column(JSON, nullable=True)  # 依赖的任务 ID 列表
     order_in_phase = Column(Integer, default=0)  # 在阶段内的顺序
-    estimated_hours = Column(Float, default=0.0)
     priority = Column(String(20), default='medium')  # high/medium/low
     condition_type = Column(String(20), default='none')  # none/before/after/conditional
     condition_data = Column(Text, nullable=True)  # 条件数据 JSON
@@ -476,11 +470,9 @@ class ScenarioTask(Base):
             'phase_name': self.phase_name,
             'name': self.name,
             'description': self.description,
-            'agent_type': self.agent_type,
             'required_capabilities': self.required_capabilities,
             'dependencies': self.dependencies,
             'order_in_phase': self.order_in_phase,
-            'estimated_hours': self.estimated_hours,
             'priority': self.priority,
             'condition_type': self.condition_type,
             'condition_data': self.condition_data,
@@ -493,11 +485,9 @@ class TaskTemplateSchema(BaseModel):
     """任务模板 Pydantic 模型"""
     name: str
     description: Optional[str] = None
-    agent_type: Optional[str] = None
     required_capabilities: Optional[List[str]] = None
     dependencies: Optional[List[str]] = None  # 任务名称引用，会被转换为 ID
     order_in_phase: int = 0
-    estimated_hours: Optional[float] = None
     priority: Optional[str] = 'medium'
     condition_type: str = 'none'
     condition_data: Optional[str] = None

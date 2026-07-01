@@ -25,7 +25,7 @@ DEFAULT_DB_PATH = os.path.join(
 def get_db_path() -> str:
     """获取数据库路径"""
     # 从环境变量或默认路径
-    return os.environ.get("NEXUS_DB_PATH", DEFAULT_DB_PATH)
+    return os.environ.get("GREVER_DB_PATH", DEFAULT_DB_PATH)
 
 
 def migrate(db_path: str = None) -> None:

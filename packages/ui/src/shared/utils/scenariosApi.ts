@@ -1,5 +1,5 @@
 /**
- * Nexus API 服务层 - 场景库 API
+ * Grever API 服务层 - 场景库 API
  * 调用真实后端 API
  * 
  * ⚠️ 所有路径从 api/paths.ts 导入
@@ -18,11 +18,9 @@ export interface ScenarioTaskTemplate {
   phase_name: string
   task_name: string
   task_description: string
-  agent_type: string
   required_capabilities: string[]
   dependencies: string[]
   order_in_phase: number
-  estimated_hours: number
   priority: string
   condition_type?: ConditionType
   condition_data?: Record<string, any> | null
@@ -30,7 +28,6 @@ export interface ScenarioTaskTemplate {
 
 export interface ScenarioStepData {
   name: string
-  agent_type: string
   required_capabilities: string[]
   condition_type: ConditionType
   condition_data: Record<string, any> | null
@@ -39,7 +36,6 @@ export interface ScenarioStepData {
 export interface ScenarioTaskData {
   name: string
   description: string
-  agent_type: string
   required_capabilities: string[]
   dependencies: string[]
   condition_type: ConditionType
@@ -53,11 +49,9 @@ export interface ScenarioPhasePayload {
   tasks: Array<{
     name: string
     description: string
-    agent_type: string
     required_capabilities: string[]
     dependencies: string[]
     priority?: string
-    estimated_hours?: number
     condition_type?: ConditionType
     condition_data?: Record<string, any> | null
     executor_type?: string
@@ -125,7 +119,6 @@ export interface Scenario {
 export interface ScenarioStep {
   id: string
   name: string
-  agent_type: string | null
   required_capabilities: string[]
   condition_type: ConditionType
   condition_data: Record<string, any> | null
@@ -133,13 +126,17 @@ export interface ScenarioStep {
 
 export interface ScenarioProjectTask {
   id: string
-  name: string
+  // Standard field names (task title)
+  title: string
+  // Backward compatibility alias (to be removed after backend migration)
+  name?: string
+  // Standard field names (task dependencies)
+  depends_on: string[] | null
+  // Backward compatibility alias (to be removed after backend migration)
+  dependencies?: string[] | null
   description: string | null
-  agent_type: string | null
   required_capabilities: string[] | null
-  dependencies: string[] | null
   order_in_phase: number
-  estimated_hours: number | null
   priority: string
   condition_type: ConditionType
   condition_data: Record<string, any> | null
@@ -150,7 +147,6 @@ export interface ScenarioProject {
   name: string
   description: string | null
   order: number
-  agent_type: string | null
   required_capabilities: string[] | null
   condition_type: ConditionType
   condition_data: Record<string, any> | null
@@ -162,11 +158,16 @@ export interface ScenarioProject {
 
 export interface ScenarioTask {
   id: string
-  name: string
+  // Standard field names
+  title: string
+  // Backward compatibility alias
+  name?: string
+  // Standard field names
+  depends_on: string[] | null
+  // Backward compatibility alias
+  dependencies?: string[] | null
   description: string | null
-  agent_type: string | null
   required_capabilities: string[] | null
-  dependencies: string[] | null
   condition_type: ConditionType
   condition_data: Record<string, any> | null
   phase_name: string
@@ -175,6 +176,17 @@ export interface ScenarioTask {
 }
 
 // ==================== 中文映射函数 ====================
+
+export function normalizeTask(task: ScenarioProjectTask | ScenarioTask): ScenarioProjectTask | ScenarioTask {
+  // Ensure title and depends_on are available with backward compatibility
+  if ('title' in task && !task.title && task.name) {
+    task.title = task.name
+  }
+  if ('depends_on' in task && !task.depends_on && task.dependencies) {
+    task.depends_on = task.dependencies
+  }
+  return task
+}
 
 export function executorTypeLabel(executorType?: string): string {
   const map: Record<string, string> = {
@@ -252,9 +264,9 @@ export const scenariosApi = {
 
   star: (id: string) => {
     try {
-      const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}')
+      const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}')
       stored[id] = { id, starredAt: new Date().toISOString() }
-      localStorage.setItem('nexus_starred_scenarios', JSON.stringify(stored))
+      localStorage.setItem('grever_starred_scenarios', JSON.stringify(stored))
       return { success: true }
     } catch {
       return { success: false }
@@ -263,10 +275,10 @@ export const scenariosApi = {
 
   unstar: (id: string) => {
     try {
-      const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}')
+      const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}')
       if (stored[id]) {
         delete stored[id]
-        localStorage.setItem('nexus_starred_scenarios', JSON.stringify(stored))
+        localStorage.setItem('grever_starred_scenarios', JSON.stringify(stored))
       }
       return { success: true }
     } catch {
@@ -276,7 +288,7 @@ export const scenariosApi = {
 
   listStarred: () => {
     try {
-      const stored = JSON.parse(localStorage.getItem('nexus_starred_scenarios') || '{}')
+      const stored = JSON.parse(localStorage.getItem('grever_starred_scenarios') || '{}')
       const starredIds = Object.keys(stored)
       return {
         total: starredIds.length,

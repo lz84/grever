@@ -9,8 +9,9 @@ ORM 是唯一权威。加一个 ORM 列 → API 的 Create/Update/Response 自�
 """
 
 from typing import Any, Optional, Set
-from pydantic import BaseModel, ConfigDict, create_model
+from pydantic import BaseModel, ConfigDict, create_model, field_validator
 from sqlalchemy import Column, DateTime, String, Text, Float, Integer, Boolean
+
 
 def _get_python_type(col: Column) -> Any:
     """SQLAlchemy 列类型 → Python 类型"""
@@ -26,6 +27,7 @@ def _get_python_type(col: Column) -> Any:
         return bool
     else:
         return Any
+
 
 def auto_schema(
     orm_class: type,
@@ -74,29 +76,19 @@ def auto_schema(
 
     UpdateSchema = create_model(f"{orm_class.__name__}Update", **update_fields)
 
-    # ── Response: build a class manually with from_attributes=True ──
+    # ── Response: use create_model to avoid reserved name issues ──
     response_fields = {}
     for name, col in columns.items():
         py_type = _get_python_type(col)
         response_fields[name] = (Optional[py_type], None)
 
-    # Build Response class by subclassing a BaseModel with the config
-    ResponseBase = BaseModel.model_validate
-
-    class _ResponseBase(BaseModel):
-        model_config = ConfigDict(from_attributes=True)
-
-    # Use the base class approach that works with Pydantic v2
-    annotations = {k: v[0] for k, v in response_fields.items()}
-
-    # Create class dynamically
-    ResponseSchema = type(
+    ResponseSchema = create_model(
         f"{orm_class.__name__}Response",
-        (_ResponseBase,),
-        {
-            '__annotations__': annotations,
-            **{k: v[1] for k, v in response_fields.items()},
-        },
+        __base__=BaseModel,
+        **{k: (v[0], v[1]) for k, v in response_fields.items()}
     )
+
+    # Add from_attributes config
+    ResponseSchema.model_config = ConfigDict(from_attributes=True)
 
     return CreateSchema, UpdateSchema, ResponseSchema

@@ -29,13 +29,10 @@ def classify_criteria(db, task_id: str) -> Tuple[List[Dict], List[Dict]]:
 
     返回 (objective_checks, subjective_checks)
     """
-    from sqlalchemy import text
+    from models.task import Task
 
     with db.engine.connect() as conn:
-        task = conn.execute(
-            text("SELECT acceptance_criteria FROM tasks WHERE id = :id"),
-            {"id": task_id},
-        ).fetchone()
+        task = conn.query(Task).filter(Task.id == task_id).first()
 
     if not task or not task.acceptance_criteria:
         return [], []
@@ -72,13 +69,10 @@ def run_verifier_checks(db, task_id: str, result: str) -> Tuple[bool, str]:
     2. 根据 criteria type 执行检查
     3. 返回 (passed, message)
     """
-    from sqlalchemy import text
+    from models.task import Task
 
     with db.engine.connect() as conn:
-        task = conn.execute(
-            text("SELECT acceptance_criteria, title, description FROM tasks WHERE id = :id"),
-            {"id": task_id},
-        ).fetchone()
+        task = conn.query(Task).filter(Task.id == task_id).first()
 
     if not task or not task.acceptance_criteria:
         return True, "No acceptance criteria defined, passed by default"
@@ -101,7 +95,7 @@ def run_verifier_checks(db, task_id: str, result: str) -> Tuple[bool, str]:
 
         if criterion_type == "compile":
             try:
-                nexus_dir = os.environ.get("NEXUS_DIR", ".")
+                nexus_dir = os.environ.get("GREVER_DIR", ".")
                 r = subprocess.run(
                     ["npx", "tsc", "--noEmit"],
                     cwd=nexus_dir,
@@ -183,7 +177,7 @@ def run_objective_checks(
 
         if criterion_type == "compile":
             try:
-                nexus_dir = os.environ.get("NEXUS_DIR", ".")
+                nexus_dir = os.environ.get("GREVER_DIR", ".")
                 r = subprocess.run(
                     ["npx", "tsc", "--noEmit"],
                     cwd=nexus_dir,
@@ -289,21 +283,18 @@ def run_objective_checks(
 
         elif criterion_type == "data":
             try:
+                from models.task import Task
                 with db.engine.connect() as conn:
-                    t = conn.execute(
-                        text("SELECT id, goal_id, project_id FROM tasks WHERE id = :id"),
-                        {"id": task_id},
-                    ).fetchone()
+                    t = conn.query(Task).filter(Task.id == task_id).first()
                     if not t:
                         detail = f"Data check: task {task_id} not found in DB"
                     else:
-                        siblings = conn.execute(
-                            text(
-                                "SELECT id, title, status, executor_type FROM tasks "
-                                "WHERE goal_id = :gid AND id != :tid ORDER BY created_at"
-                            ),
-                            {"gid": t.goal_id, "tid": task_id},
-                        ).fetchall()
+                        siblings = (
+                            conn.query(Task)
+                            .filter(Task.goal_id == t.goal_id, Task.id != task_id)
+                            .order_by(Task.created_at)
+                            .all()
+                        )
                         issues = []
                         for s in siblings:
                             if s.executor_type == "human" and s.status not in (

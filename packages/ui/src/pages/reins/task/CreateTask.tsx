@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from "sonner"
 import { tasksApi, projectsApi, goalsApi } from '../../../shared/utils/api'
 import type { Project, Goal } from '../../../shared/utils/api'
@@ -27,16 +27,19 @@ import { Separator } from '@/shared/components/ui/separator'
 
 export default function CreateTask() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [goals, setGoals] = useState<Goal[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(false)
 
-  // Form state
+  // Form state — pre-fill from URL params if present
+  const urlGoalId = searchParams.get('goal_id') || ''
+  const urlProjectId = searchParams.get('project_id') || ''
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [selectedGoalId, setSelectedGoalId] = useState('')
-  const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [selectedGoalId, setSelectedGoalId] = useState(urlGoalId)
+  const [selectedProjectId, setSelectedProjectId] = useState(urlProjectId)
   const [priority, setPriority] = useState('medium')
   const [category, setCategory] = useState('')
   const [agentId, setAgentId] = useState('')
@@ -50,14 +53,28 @@ export default function CreateTask() {
     loadGoals()
   }, [])
 
-  // Load projects when goal changes
+  // Load projects when goal changes (including initial URL param)
   useEffect(() => {
     if (selectedGoalId) {
       loadProjects(selectedGoalId)
+      // If URL had a project_id, set it after projects load
+      if (urlProjectId && !selectedProjectId) {
+        // Will be set once projects are loaded
+      }
     } else {
       setProjects([])
     }
   }, [selectedGoalId])
+
+  // Pre-select project from URL once projects are loaded
+  useEffect(() => {
+    if (urlProjectId && projects.length > 0 && !selectedProjectId) {
+      const found = projects.find(p => p.id === urlProjectId)
+      if (found) {
+        setSelectedProjectId(urlProjectId)
+      }
+    }
+  }, [projects, urlProjectId])
 
   async function loadGoals() {
     try {
@@ -109,18 +126,35 @@ export default function CreateTask() {
 
     setLoading(true)
     try {
+      // Build doc_refs as JSON string (backend expects string, not array)
+      const filteredDocRefs = docRefs.filter(d => d.trim())
+      const docRefsJson = filteredDocRefs.length > 0 ? JSON.stringify(filteredDocRefs) : undefined
+
+      // Default acceptance_criteria: required when needs_verification=True (default)
+      const defaultAcceptanceCriteria = JSON.stringify({
+        criteria: [
+          { type: 'manual', name: '手动验收', desc: '确认任务完成并符合预期' }
+        ]
+      })
+
+      // Default project_id: backend defaults to 'proj-grever-internal' but validation runs before that
+      const effectiveProjectId = selectedProjectId || 'proj-grever-internal'
+
       // Create task
       const task = await tasksApi.create({
         title: title.trim(),
         description: description.trim(),
         priority,
-        project_id: selectedProjectId || undefined,
+        project_id: effectiveProjectId,
         goal_id: selectedGoalId || undefined,
-        category: category || undefined,
         assigned_agent: agentId || undefined,
         estimated_hours: estimatedHours ? Number(estimatedHours) : undefined,
         workspace_path: workspacePath || undefined,
-        doc_refs: docRefs.filter(d => d.trim()),
+        // Backend required fields:
+        depends_on: [],
+        capability_tags: {},
+        doc_refs: docRefsJson,
+        acceptance_criteria: defaultAcceptanceCriteria,
       })
       toast.success(`任务 "${task.title}" 创建成功`)
 

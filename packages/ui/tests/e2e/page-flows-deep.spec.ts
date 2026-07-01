@@ -1,5 +1,5 @@
 ﻿/**
- * Nexus E2E Deep Test Suite - 深度业务流程测试
+ * Grever E2E Deep Test Suite - 深度业务流程测试
  * 
  * 覆盖：表单提交、数据流转、CRUD 操作、跨页面导航、错误处理
  * 
@@ -194,16 +194,17 @@ test.describe('D3: Task CRUD 全流程', () => {
     await page.goto(`${BASE}/coordination/tasks`);
     await pageReady(page);
     
-    const firstLink = page.locator('a[href*="/coordination/tasks/"]').first();
-    if (await firstLink.isVisible()) {
-      await firstLink.click();
+    // 点击任务列表中的第一个任务行
+    const firstRow = page.locator('table tbody tr').first();
+    if (await firstRow.isVisible()) {
+      await firstRow.click();
       await pageReady(page);
       
       const content = await page.content();
       expect(content.length).toBeGreaterThan(1000);
       
-      // 验证有状态信息
-      const hasStatus = content.includes('status') || content.includes('状态') || content.includes('pending') || content.includes('done');
+      // 验证有状态信息：页面显示"状态"标签和状态值（待处理/进行中/已完成等）
+      const hasStatus = content.includes('状态') || content.includes('待处理') || content.includes('进行中') || content.includes('已完成');
       expect(hasStatus).toBe(true);
     }
   });

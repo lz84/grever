@@ -15,7 +15,7 @@ import os
 from typing import Optional
 from sqlalchemy import text
 
-_DEFAULT_BASE_URL = os.environ.get("NEXUS_BASE_URL", "http://127.0.0.1:8097")
+_DEFAULT_BASE_URL = os.environ.get("GREVER_BASE_URL", "http://127.0.0.1:8097")
 
 def build_task_execution_context(
     task_id: str,
@@ -104,7 +104,7 @@ def build_task_execution_context(
                 "title": row.goal_title or "",
                 "description": row.goal_description or "",
                 "status": row.goal_status or "active",
-                "mode": row.goal_mode or "normal",
+                "mode": row.goal_mode or "engineering",
             }
 
         deps_raw = _parse_json_field(row.task_depends_on)
@@ -174,7 +174,7 @@ def _build_unified_prompt(ctx: dict) -> str:
         if goal.get("status"):
             lines.append(f"- 状态：{goal['status']}")
         if goal.get("mode"):
-            mode_map = {"normal": "常规", "exploration": "探索", "optimization": "迭代"}
+            mode_map = {"engineering": "工程模式", "research": "研究模式"}
             lines.append(f"- 模式：{mode_map.get(goal['mode'], goal['mode'])}")
 
         goal_atts = ctx["attachments"]["goal"]

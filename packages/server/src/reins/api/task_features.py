@@ -10,66 +10,14 @@ from datetime import datetime
 from typing import List, Optional
 
 from reins.common.database import get_db
-from .task_features_logic import _get_task_labels, _add_task_label, _delete_task_label, _get_all_labels, _get_task_comments, _add_task_comment, _delete_task_comment, _get_execution_logs, _get_task_sub_issues, _add_task_sub_issue, _delete_task_sub_issue, _get_task_attachments, _upload_task_attachment_async, _delete_task_attachment
+from .task_features_logic import (
+    _get_task_comments, _add_task_comment, _delete_task_comment,
+    _get_execution_logs, _get_task_sub_issues, _add_task_sub_issue,
+    _delete_task_sub_issue, _get_task_attachments,
+    _upload_task_attachment_async, _delete_task_attachment,
+)
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["task-features"])
-
-@router.get("/{task_id}/labels")
-async def get_task_labels(task_id: str):
-    """返回指定任务的所有标签"""
-    db = next(get_db())
-    try:
-        return _get_task_labels(db, task_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取标签失败: {str(e)}")
-    finally:
-        db.close()
-
-@router.post("/{task_id}/labels")
-async def add_task_label(task_id: str, label_data: dict):
-    """为任务添加标签"""
-    name = label_data.get("name")
-    color = label_data.get("color")
-    if not name or not color:
-        raise HTTPException(status_code=400, detail="标签名称和颜色不能为空")
-    db = next(get_db())
-    try:
-        return _add_task_label(db, task_id, name, color)
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"添加标签失败: {str(e)}")
-    finally:
-        db.close()
-
-@router.delete("/{task_id}/labels/{label_id}")
-async def delete_task_label(task_id: str, label_id: str):
-    """删除任务的指定标签"""
-    db = next(get_db())
-    try:
-        _delete_task_label(db, task_id, label_id)
-        return {"message": "标签删除成功"}
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"删除标签失败: {str(e)}")
-    finally:
-        db.close()
-
-@router.get("/labels/all")
-async def get_all_labels():
-    """返回所有可用标签"""
-    db = next(get_db())
-    try:
-        return _get_all_labels(db)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取所有标签失败: {str(e)}")
-    finally:
-        db.close()
 
 @router.get("/{task_id}/comments")
 async def get_task_comments(task_id: str):
@@ -110,6 +58,9 @@ async def delete_task_comment(task_id: str, comment_id: str):
     try:
         _delete_task_comment(db, task_id, comment_id)
         return {"message": "评论删除成功"}
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         db.rollback()
         raise
@@ -170,6 +121,9 @@ async def delete_task_sub_issue(task_id: str, relation_id: str):
     try:
         _delete_task_sub_issue(db, task_id, relation_id)
         return {"message": "关联删除成功"}
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         db.rollback()
         raise
@@ -237,6 +191,9 @@ async def delete_task_attachment(task_id: str, attachment_id: str):
     try:
         _delete_task_attachment(db, task_id, attachment_id, logger)
         return {"message": "附件删除成功"}
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         db.rollback()
         raise

@@ -1,25 +1,22 @@
 /**
- * Nexus API 服务层
+ * Grever API 服务层
  * 统一封装所有后端 API 调用
  * 
  * ⚠️ 规则：所有 API 路径必须从 api/paths.ts 导入，禁止硬编码路径
  */
 
 import {
-  API_V1,
   GOALS, PROJECTS, TASKS, SCENARIOS, WORKFLOWS,
   SCHEDULER, TIMEOUT, TRACES,
-  AGENTS, AGENT_MATCHING, AGENT_PLATFORMS, CAPABILITIES, INDUSTRY_TAGS, INDUSTRY_PACKS,
-  PROMPT_TEMPLATES, SOPS, CHECKLISTS, REFERENCE_DATA,
+  AGENTS, AGENT_SCHEMES, AGENT_MATCHING, AGENT_PLATFORMS, CAPABILITIES, INDUSTRY_TAGS, INDUSTRY_PACKS,
   HUMAN_INPUT, HUMAN_REVIEW, DISPUTES, SOLUTIONS,
-  GRASP, CONTEXT, KNOWLEDGE_INJECTOR,
-  MCP_SERVERS, SKILLS, ATTACHMENTS, ARTIFACTS, REPORTS,
+  GRASP, CONTEXT, KNOWLEDGE_INJECTOR, KNOWLEDGE,
+  MCP_SERVERS, SKILLS, PACK_SKILLS, ATTACHMENTS, ARTIFACTS, REPORTS,
   ADMIN, SETTINGS, SECURITY, DASHBOARD, SEARCH, API_DOCS, EVENTS,
+  EVALUATION_DECOMPOSE,
 } from '../api/paths'
 
 // ==================== Request 基础函数 ====================
-
-const API_BASE = API_V1
 
 interface FetchOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>
@@ -28,7 +25,7 @@ interface FetchOptions extends RequestInit {
 export async function request<T>(path: string, options: FetchOptions = {}): Promise<T> {
   const { params, ...fetchOptions } = options
 
-  let url = `${API_BASE}${path}`
+  let url = path
   if (params) {
     const searchParams = new URLSearchParams()
     Object.entries(params).forEach(([key, value]) => {
@@ -66,7 +63,7 @@ export interface Goal {
   project_id: string | null; parent_id: number | null; workspace_type: string | null
   workspace_path: string | null; workspace_status: string | null; workspace_error: string | null
   last_clone_at: string | null; last_pull_at: string | null; last_push_at: string | null
-  verifier_agent_id: string | null; mode?: string; optimization_target?: string
+  verifier_agent_id: string | null; main_agent_id?: string | null; mode?: string; optimization_target?: string
   convergence_threshold?: number; max_rounds?: number; capability_tags?: Record<string, string[]>
 }
 
@@ -97,6 +94,7 @@ export interface Agent {
   max_concurrent_tasks?: number; consecutive_offline_count?: number; health_status?: string
   trigger_mode: string; model_name: string; registered_at: string; last_heartbeat: string
   platform_type?: string; platform_config?: Record<string, any>
+  agent_code?: string  // OpenClaw agent code (replaces hardcoded UUID mapping)
 }
 
 export interface Dispute {
@@ -140,6 +138,88 @@ export interface SubmitDecomposeResult {
   projects: Project[]; goal_id: string
 }
 
+// Sprint 6: Verification Report
+export interface VerificationReport {
+  id: string
+  goal_id: string
+  report_type: string
+  status: string
+  round?: number
+  verdict?: string
+  summary?: string
+  findings: any[]
+  gaps: any[]
+  recommendations: any[]
+  remedial_tasks: any[]
+  created_at: string
+  updated_at: string
+}
+
+// ==================== Knowledge Base (Sprint 75 Phase 2) ====================
+
+export interface KnowledgeEntry {
+  id: string
+  pack_id: string
+  name: string
+  category: string
+  content: string | null
+  file_path: string | null
+  version: string
+  tags: string[]
+  created_at: number
+}
+
+export interface KnowledgeCreate {
+  id?: string
+  pack_id: string
+  name: string
+  category?: string
+  content?: string
+  file_path?: string
+  version?: string
+  tags?: string[]
+}
+
+export interface KnowledgeUpdate {
+  name?: string
+  category?: string
+  content?: string
+  file_path?: string
+  version?: string
+  tags?: string[]
+}
+
+export interface AgentScheme {
+  id: string
+  pack_id: string
+  name: string
+  description: string | null
+  roles: AgentSchemeRole[]
+  created_at: number
+}
+
+export interface AgentSchemeRole {
+  id: string
+  scheme_id: string
+  role_name: string
+  required_tags: string[]
+  priority: number
+}
+
+export interface AgentSchemeCreate {
+  id?: string
+  pack_id: string
+  name: string
+  description?: string
+  roles?: AgentSchemeRole[]
+}
+
+export interface AgentSchemeUpdate {
+  name?: string
+  description?: string
+  roles?: AgentSchemeRole[]
+}
+
 // ==================== Goals API ====================
 
 export const goalsApi = {
@@ -148,7 +228,7 @@ export const goalsApi = {
     return resp.goals || []
   },
   get: (id: number | string) => request<Goal>(GOALS.GET(id)),
-  create: (data: { title: string; description?: string; parent_id?: number | string; priority?: string; due_date?: string; workspace_type?: string; workspace_path?: string; verifier_agent_id?: string }) =>
+  create: (data: { title: string; description?: string; parent_id?: number | string; priority?: string; due_date?: string; workspace_type?: string; workspace_path?: string; verifier_agent_id?: string; main_agent_id?: string }) =>
     request<Goal>(GOALS.CREATE, { method: 'POST', body: JSON.stringify(data) }),
   updateStatus: (id: number | string, status: string) =>
     request(GOALS.UPDATE_STATUS(id), { method: 'PATCH', body: JSON.stringify({ status }) }),
@@ -175,13 +255,13 @@ export const goalsApi = {
     request<{ goal_id: number | string; projects: DecomposedProject[] }>(GOALS.AUTO_DECOMPOSE_PREVIEW(id), {
       method: 'POST',
     }),
-  getIterations: (goalId: number | string) => request<any[]>(GOALS.GET_ITERATIONS(goalId)),
-  iterationAnalysis: (goalId: number | string, iterationId: number | string) =>
-    request<any>(GOALS.ITERATION_ANALYSIS(goalId, iterationId), { method: 'POST' }),
-  iterationConsensus: (goalId: number | string, iterationId: number | string, data: { consensus: string }) =>
-    request<any>(GOALS.ITERATION_CONSENSUS(goalId, iterationId), { method: 'POST', body: JSON.stringify(data) }),
-  iterationDiscuss: (goalId: number | string, iterationId: number | string, data: { message: string; author?: string }) =>
-    request<any>(GOALS.ITERATION_DISCUSS(goalId, iterationId), { method: 'POST', body: JSON.stringify(data) }),
+  getIterations: (goalId: number | string) => request<any>(GOALS.GET_ITERATIONS(goalId)),
+  iterationAnalysis: (goalId: number | string, iterationId: number | string, data?: { human_response?: string; adjustments?: object }) =>
+    request<any>(GOALS.ITERATION_ANALYSIS(goalId, iterationId), { method: 'POST', body: JSON.stringify(data || {}) }),
+  iterationConsensus: (goalId: number | string, iterationId: number | string, data?: Record<string, any>) =>
+    request<any>(GOALS.ITERATION_CONSENSUS(goalId, iterationId), { method: 'POST', body: JSON.stringify(data || {}) }),
+  iterationDiscuss: (goalId: number | string, iterationId: number | string, data?: { message?: string; author?: string }) =>
+    request<any>(GOALS.ITERATION_DISCUSS(goalId, iterationId), data ? { method: 'POST', body: JSON.stringify(data) } : {}),
   setVerifier: (goalId: number | string, agentId: string) =>
     request<any>(GOALS.SET_VERIFIER(goalId), { method: 'POST', body: JSON.stringify({ verifier_agent_id: agentId }) }),
   setConstraints: (goalId: number | string, constraints: Record<string, any>) =>
@@ -206,6 +286,74 @@ export const goalsApi = {
     request<any>(GOALS.RESUME(id), { method: 'POST' }),
   getTree: (id: number | string) =>
     request<any>(GOALS.GET_TREE(id)),
+  // Sprint 6: Verification reports
+  getVerificationReports: (id: number | string) =>
+    request<VerificationReport[]>(GOALS.GET_VERIFICATION_REPORTS(id)),
+  createRemedialTask: (id: number | string, data: { title: string; description?: string; project_id?: string; priority?: string }) =>
+    request<Task>(GOALS.CREATE_REMEDIAL_TASK(id), { method: 'POST', body: JSON.stringify(data) }),
+  // HITL pending questions
+  getPendingQuestions: (id: number | string) =>
+    request<Tier0Question[]>(GOALS.GET_PENDING_QUESTIONS(id)),
+  submitAnswers: (id: number | string, data: Record<string, string>) =>
+    request<any>(GOALS.SUBMIT_ANSWERS(id), { method: 'POST', body: JSON.stringify(data) }),
+}
+
+// ==================== Decomposition API (Sprint 1) ====================
+
+export const decompositionApi = {
+  getPreview: (goalId: number | string) =>
+    request<any>(GOALS.DECOMPOSE_PREVIEW(goalId)),
+  evaluateDecompose: (goalId: number | string) =>
+    request<any>(GOALS.EVALUATE_DECOMPOSE(goalId), { method: 'POST' }),
+  pendingQuestions: (goalId: number | string) =>
+    request<Tier0Question[]>(GOALS.GET_PENDING_QUESTIONS(goalId)),
+  autoDecomposePreview: (goalId: number | string) =>
+    request<any>(GOALS.AUTO_DECOMPOSE_PREVIEW(goalId), { method: 'POST' }),
+  submitDecompose: (goalId: number | string, data: any) =>
+    request<any>(GOALS.SUBMIT_DECOMPOSE(goalId), { method: 'POST', body: JSON.stringify(data) }),
+}
+
+// ==================== Evaluation Decompose API (Sprint 4) ====================
+
+export interface Tier0Question {
+  id: string
+  question_id: string
+  question: string
+  question_text: string
+  question_type: string
+  category: string
+  context?: string
+  options?: string[]
+  answer?: string
+  priority?: number
+  reason?: string
+  impact?: string
+}
+
+export const evaluationDecomposeApi = {
+  start: (goalId: string, data?: Record<string, any>) =>
+    request<any>(EVALUATION_DECOMPOSE.START, { method: 'POST', body: JSON.stringify({ goal_id: goalId, ...data }) }),
+  e2: (sessionId: string, data: Record<string, any>) =>
+    request<any>(EVALUATION_DECOMPOSE.E2(sessionId), { method: 'POST', body: JSON.stringify(data) }),
+  e3: (sessionId: string, data: Record<string, any>) =>
+    request<any>(EVALUATION_DECOMPOSE.E3(sessionId), { method: 'POST', body: JSON.stringify(data) }),
+  e4: (sessionId: string, data: Record<string, any>) =>
+    request<any>(EVALUATION_DECOMPOSE.E4(sessionId), { method: 'POST', body: JSON.stringify(data) }),
+  getStatus: (sessionId: string) =>
+    request<any>(EVALUATION_DECOMPOSE.STATUS(sessionId)),
+  getQuestions: (sessionId: string) =>
+    request<Tier0Question[]>(EVALUATION_DECOMPOSE.QUESTIONS(sessionId)),
+}
+
+// ==================== Goal HITL API ====================
+
+export const goalHitlApi = {
+  getPendingQuestions: (goalId: string) =>
+    request<Tier0Question[]>(GOALS.GET_PENDING_QUESTIONS(goalId)),
+  submitAnswers: (goalId: string, data: Record<string, string>) =>
+    request<any>(GOALS.SUBMIT_ANSWERS(goalId), { method: 'POST', body: JSON.stringify(data) }),
+  evaluateDecompose: (goalId: string) =>
+    request<any>(GOALS.EVALUATE_DECOMPOSE(goalId), { method: 'POST' }),
 }
 
 // ==================== Projects API ====================
@@ -235,6 +383,10 @@ export const projectsApi = {
     request<{ ok: boolean; project_id: string; assigned: number; total: number }>(PROJECTS.AUTO_ASSIGN(id), { method: 'POST' }),
   updateStatus: (id: number | string, status: string) =>
     request<any>(PROJECTS.UPDATE_STATUS(id), { method: 'PATCH', body: JSON.stringify({ status }) }),
+  countByGoal: (goalId?: string) => {
+    const params = goalId ? `?goal_id=${goalId}` : ''
+    return request<Record<string, number> | { goal_id: string; count: number }>(`/api/v1/projects/count${params}`)
+  },
 }
 
 // ==================== Tasks API ====================
@@ -245,7 +397,7 @@ export const tasksApi = {
     return resp.tasks || []
   },
   get: (id: string) => request<Task>(TASKS.GET(id)),
-  create: (data: { title: string; description?: string; project_id?: string; goal_id?: string; assigned_agent?: string; priority?: number | string; category?: string; estimated_hours?: number; doc_refs?: string[]; workspace_path?: string; depends_on?: string[]; acceptance_criteria?: string }) =>
+  create: (data: { title: string; description?: string; project_id?: string; goal_id?: string; assigned_agent?: string; priority?: number | string; category?: string; estimated_hours?: number; doc_refs?: string | string[]; workspace_path?: string; depends_on?: string[]; acceptance_criteria?: string; capability_tags?: Record<string, any> }) =>
     request<Task>(TASKS.CREATE, { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: { title?: string; description?: string; status?: string; priority?: number | string; assigned_agent?: string; doc_refs?: string[] | null; workspace_path?: string | null; verifier_agent_id?: string | null; depends_on?: string[] }) =>
     request<Task>(TASKS.UPDATE(id), { method: 'PUT', body: JSON.stringify(data) }),
@@ -269,6 +421,13 @@ export const tasksApi = {
   deleteTask: (taskId: string) => request<void>(TASKS.REMOVE(taskId), { method: 'DELETE' }),
   pauseTask: (taskId: string) => request<{ success: boolean; task_id: string }>(TASKS.PAUSE(taskId), { method: 'POST' }),
   resumeTask: (taskId: string) => request<{ success: boolean; task_id: string }>(TASKS.RESUME(taskId), { method: 'POST' }),
+  countByGoal: (goalId?: string, projectId?: string) => {
+    const params = new URLSearchParams()
+    if (goalId) params.set('goal_id', goalId)
+    if (projectId) params.set('project_id', projectId)
+    const qs = params.toString()
+    return request<Record<string, { completed: number; total: number }> | { goal_id: string; completed: number; total: number }>(`/api/v1/tasks/count${qs ? '?' + qs : ''}`)
+  },
   restartTask: (taskId: string) => request<{ success: boolean; task_id: string }>(TASKS.RESTART(taskId), { method: 'POST' }),
   blockTask: (taskId: string, reason?: string) => request<{ success: boolean; task_id: string }>(TASKS.BLOCK(taskId), { method: 'PATCH', body: JSON.stringify({ reason }) }),
   unblockTask: (taskId: string) => request<{ success: boolean; task_id: string }>(TASKS.UNBLOCK(taskId), { method: 'PATCH' }),
@@ -298,13 +457,15 @@ export const tasksApi = {
   deleteSubIssue: (taskId: string, relationId: string) => request<void>(TASKS.DELETE_SUB_ISSUE(taskId, relationId), { method: 'DELETE' }),
   // Context / Logs / Progress
   getContext: (taskId: string) => request<any>(TASKS.GET_CONTEXT(taskId)),
-  getFailureLog: (taskId: string) => request<any[]>(TASKS.GET_FAILURE_LOG(taskId)),
+  getFailureLog: (taskId: string) => request<{ task_id: string; failures: any[] }>(TASKS.GET_FAILURE_LOG(taskId)),
   updateProgress: (taskId: string, data: { progress?: number; notes?: string }) =>
     request<{ success: boolean }>(TASKS.UPDATE_PROGRESS(taskId), { method: 'POST', body: JSON.stringify(data) }),
   getExecutionLogs: (taskId: string, limit?: number) =>
-    request<any[]>(TASKS.GET_EXECUTION_LOGS(taskId), { params: { limit: limit || 50 } }),
+    request<any>(TASKS.GET_EXECUTION_LOGS(taskId), { params: { limit: limit || 50 } }),
   // Verification / Review / Ruling
   getVerifications: (taskId: string) => request<any[]>(TASKS.GET_VERIFICATIONS(taskId)),
+  resubmitVerification: (taskId: string, data?: { result?: string; passed?: boolean }) =>
+    request<{ success: boolean }>(TASKS.VERIFY(taskId), { method: 'POST', body: JSON.stringify(data || {}) }),
   verifyTask: (taskId: string, data?: { result?: string; passed?: boolean }) =>
     request<{ success: boolean }>(TASKS.VERIFY(taskId), { method: 'POST', body: JSON.stringify(data || {}) }),
   reviewTask: (taskId: string, data: { review: string; decision?: string }) =>
@@ -316,7 +477,7 @@ export const tasksApi = {
   batchUpdate: (data: { task_ids: string[]; updates: Record<string, any> }) =>
     request<{ success: boolean }>(TASKS.BATCH_UPDATE, { method: 'PATCH', body: JSON.stringify(data) }),
   remove: (id: number | string) => request<void>(TASKS.REMOVE(id), { method: 'DELETE' }),
-  getStatuses: () => request<string[]>(TASKS.GET_STATUSES),
+  getStatuses: () => request<any>(TASKS.GET_STATUSES),
   getActivity: (taskId: string) => request<any>(TASKS.GET_ACTIVITY(taskId)),
 }
 
@@ -418,8 +579,12 @@ export const tracesApi = {
   complete: (taskId: string, data: { final_state: string; success: boolean; result?: any; error_message?: string; cognitions_used?: number; context_size_bytes?: number }) =>
     request(TRACES.COMPLETE(taskId), { method: 'PATCH', body: JSON.stringify(data) }),
   get: (taskId: string) => request<Trace>(TRACES.GET(taskId)),
-  list: () => request<{ running: any[]; completed: any[] }>(TRACES.LIST),
+  list: () => request<any>(TRACES.LIST),
   getReport: (taskId: string) => request(TRACES.GET_REPORT(taskId)),
+  getExecutionLogs: (taskId: string, limit?: number) =>
+    request<any>(TRACES.GET_EXECUTION_LOGS(taskId), { params: { limit: limit || 50 } }),
+  getStepStatus: (taskId: string) =>
+    request<any>(TRACES.GET_STEP_STATUS(taskId)),
 }
 
 // ==================== Workflows API ====================
@@ -428,7 +593,7 @@ export const workflowsApi = {
   createFromGoal: (goalId: string, createdBy?: string) =>
     request<Workflow>(`/workflows/from-goal`, { method: 'POST', params: { goal_id: goalId, created_by: createdBy || '' } }),
   get: (id: string) => request<Workflow>(WORKFLOWS.GET(id)),
-  list: (params?: { status?: string; goal_id?: string; page?: number; page_size?: number; search?: string; time_range?: string }) =>
+  list: (params?: { status?: string; goal_id?: string; task_id?: string; page?: number; page_size?: number; search?: string; time_range?: string }) =>
     request<Workflow[]>(WORKFLOWS.LIST, { params: params || {} }).then(items => {
       if (Array.isArray(items)) return items
       if (items && typeof items === 'object' && 'items' in items) return (items as any).items
@@ -485,7 +650,7 @@ export const agentMatchingApi = {
 export const workspaceApi = {
   clone: (goalId: string) => request(GOALS.WORKSPACE_CLONE(goalId), { method: 'POST' }),
   pull: (goalId: string) => request(GOALS.WORKSPACE_PULL(goalId), { method: 'POST' }),
-  push: (goalId: string, commit_msg?: string) => request(GOALS.WORKSPACE_PUSH(goalId), { method: 'POST', body: JSON.stringify({ commit_msg: commit_msg || "Auto-commit from Nexus" }) }),
+  push: (goalId: string, commit_msg?: string) => request(GOALS.WORKSPACE_PUSH(goalId), { method: 'POST', body: JSON.stringify({ commit_msg: commit_msg || "Auto-commit from Grever" }) }),
   status: (goalId: string) => request(GOALS.WORKSPACE_STATUS(goalId)),
 }
 
@@ -541,14 +706,15 @@ export interface PackVersion {
   id: string
   pack_id: string
   version: string
-  operation: string
+  action: string
+  operation?: string  // alias for action (for backward compat)
   created_at: number
   notes?: string
   created_by?: string
 }
 
 export interface PackExportOptions {
-  format: 'nexus-pack' | 'json'
+  format: 'grever-pack' | 'json'
   include_resources?: boolean
 }
 
@@ -572,7 +738,9 @@ export interface PackValidationResult {
 
 export const industryPacksExtendedApi = {
   versions: (packId: string) =>
-    request<{ items: PackVersion[]; total: number }>(INDUSTRY_PACKS.VERSIONS(packId)),
+    request<{ pack_id: string; versions: PackVersion[]; total: number }>(INDUSTRY_PACKS.VERSIONS(packId)).then(
+      (res) => ({ items: res.versions || [], total: res.total || 0 }),
+    ),
   exportPack: (packId: string, options: PackExportOptions) =>
     request<Blob>(INDUSTRY_PACKS.EXPORT(packId), {
       method: 'POST',
@@ -590,68 +758,7 @@ export const industryPacksExtendedApi = {
     request<PackValidationResult>(INDUSTRY_PACKS.VALIDATE(packId), { method: 'POST' }),
 }
 
-// ==================== Prompt Templates / SOP / Checklist / Reference Data API ====================
-
-export interface PromptTemplate {
-  id: string
-  pack_id?: string
-  name: string
-  content: string
-  description?: string
-  created_at: number
-  updated_at?: number
-}
-
-export interface SOP {
-  id: string
-  pack_id?: string
-  name: string
-  steps: any[]
-  description?: string
-  created_at: number
-  updated_at?: number
-}
-
-export interface Checklist {
-  id: string
-  pack_id?: string
-  name: string
-  items: any[]
-  description?: string
-  created_at: number
-  updated_at?: number
-}
-
-export interface ReferenceData {
-  id: string
-  pack_id?: string
-  name: string
-  data_type: string
-  content: any
-  description?: string
-  created_at: number
-  updated_at?: number
-}
-
-export const promptTemplatesApi = {
-  list: (params?: { pack_id?: string }) =>
-    request<{ items: PromptTemplate[]; total: number }>(PROMPT_TEMPLATES.LIST, { params }),
-}
-
-export const sopsApi = {
-  list: (params?: { pack_id?: string }) =>
-    request<{ items: SOP[]; total: number }>(SOPS.LIST, { params }),
-}
-
-export const checklistsApi = {
-  list: (params?: { pack_id?: string }) =>
-    request<{ items: Checklist[]; total: number }>(CHECKLISTS.LIST, { params }),
-}
-
-export const referenceDataApi = {
-  list: (params?: { pack_id?: string }) =>
-    request<{ items: ReferenceData[]; total: number }>(REFERENCE_DATA.LIST, { params }),
-}
+// Removed: PromptTemplate, SOP, Checklist, ReferenceData interfaces and APIs (orphaned)
 
 // ==================== Re-export ====================
 
@@ -704,4 +811,142 @@ export async function createScenarioFromGoal(goalId: string): Promise<CreateScen
   return resp.json()
 }
 
+// ==================== GrASP API ====================
+
+export const graspApi = {
+  cognitionAssessment: (agentId: string) => request<any>(GRASP.COGNITION_ASSESSMENT(agentId)),
+  recommend: (params?: { capabilities?: string }) => request<any>(GRASP.RECOMMEND, { params: params || {} }),
+  cognitionList: () => request<any[]>(GRASP.COGNITION_LIST),
+  cognitionGet: (id: string) => request<any>(GRASP.COGNITION_GET(id)),
+  cognitionCreate: (data: any) => request<any>(GRASP.COGNITION_CREATE, { method: 'POST', body: JSON.stringify(data) }),
+  cognitionUpdate: (id: string, data: any) => request<any>(GRASP.COGNITION_UPDATE(id), { method: 'PUT', body: JSON.stringify(data) }),
+  cognitionRemove: (id: string) => request<void>(GRASP.COGNITION_REMOVE(id), { method: 'DELETE' }),
+  knowledgeGraph: () => request<any>(GRASP.KNOWLEDGE_GRAPH),
+  knowledgeList: () => request<any[]>(GRASP.KNOWLEDGE_LIST),
+  injectRules: () => request<any>(GRASP.INJECT_RULES),
+  injectRule: (ruleId: string) => request<any>(GRASP.INJECT_RULE(ruleId)),
+  injectStatus: () => request<any>(GRASP.INJECT_STATUS),
+  injectLogs: (page: number, pageSize: number) =>
+    request<any>(GRASP.INJECT_RULES + `/logs?page=${page}&page_size=${pageSize}`),
+}
+
+// ==================== MCP Servers API ====================
+
+export const mcpServersApi = {
+  list: () => request<{ servers: any[]; total: number }>(MCP_SERVERS.LIST),
+  get: (id: string) => request<any>(MCP_SERVERS.GET(id)),
+  create: (data: any) => request<any>(MCP_SERVERS.CREATE, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: any) => request<any>(MCP_SERVERS.UPDATE(id), { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id: string) => request<void>(MCP_SERVERS.REMOVE(id), { method: 'DELETE' }),
+  getTools: (id: string) => request<{ tools: any[] }>(MCP_SERVERS.GET_TOOLS(id)),
+}
+
+// ==================== Skills API ====================
+
+export const skillsApi = {
+  list: () => request<{ skills: any[]; total: number }>(SKILLS.LIST),
+  get: (id: string) => request<any>(SKILLS.GET(id)),
+  getFiles: (id: string) => request<any>(SKILLS.GET_FILES(id)),
+  getInstallPrompt: (id: string) => request<any>(SKILLS.GET_INSTALL_PROMPT(id)),
+  getRaw: (id: string, filename: string) => request<any>(SKILLS.GET_RAW(id, filename)),
+}
+
+// Sprint 116: Pack Skills API (DB-backed industry pack skills)
+
+export interface PackSkill {
+  id: string
+  pack_id: string
+  name: string
+  description: string | null
+  input_schema: Record<string, unknown>
+  output_schema: Record<string, unknown>
+  required_tags: string[]
+  tool_dependency: string | null
+  created_at: number
+  updated_at: number | null
+}
+
+export const packSkillsApi = {
+  list: (packId?: string) => {
+    const params = packId ? `?pack_id=${packId}` : ''
+    return request<{ skills: PackSkill[]; total: number }>(`/api/v1/pack-skills${params}`)
+  },
+  listByPack: (packId: string) =>
+    request<{ skills: PackSkill[]; total: number }>(PACK_SKILLS.BY_PACK(packId)),
+  byPack: (packId: string) =>
+    request<{ skills: PackSkill[]; total: number }>(PACK_SKILLS.BY_PACK(packId)),
+  get: (id: string) => request<PackSkill>(PACK_SKILLS.GET(id)),
+}
+
+// ==================== Human Input API ====================
+
+export const humanInputApi = {
+  listPending: (params?: Record<string, string>) => request<any>(HUMAN_INPUT.LIST_PENDING, { params: params || {} }),
+  get: (id: string) => request<any>(HUMAN_INPUT.GET(id)),
+  getByTask: (taskId: string) => request<any>(HUMAN_INPUT.GET_BY_TASK(taskId)),
+  getByScenario: (scenarioId: string) => request<any>(HUMAN_INPUT.GET_BY_SCENARIO(scenarioId)),
+  getRecent: () => request<any[]>(HUMAN_INPUT.GET_RECENT),
+  submit: (id: string, data: any) => request<any>(HUMAN_INPUT.SUBMIT(id), { method: 'POST', body: JSON.stringify(data) }),
+  reject: (id: string, data?: any) => request<any>(HUMAN_INPUT.REJECT(id), { method: 'POST', body: JSON.stringify(data || {}) }),
+  getStats: () => request<any>(HUMAN_INPUT.GET_STATS),
+  getReviewStats: () => request<any>(HUMAN_INPUT.GET_REVIEW_STATS),
+  getAnalytics: (days: number) => request<any>(HUMAN_INPUT.GET_ANALYTICS(days)),
+}
+
+// ==================== Human Review API ====================
+
+export const humanReviewApi = {
+  listPending: () => request<any[]>(HUMAN_REVIEW.LIST_PENDING),
+  getStats: () => request<any>(HUMAN_REVIEW.GET_STATS),
+  batchRuling: (data: any) => request<any>(HUMAN_REVIEW.BATCH_RULING, { method: 'POST', body: JSON.stringify(data) }),
+}
+
+// ==================== Dashboard API ====================
+
+export const dashboardApi = {
+  stats: () => request<any>(DASHBOARD.STATS),
+}
+
+// ==================== Industry Tags API ====================
+
+export const industryTagsApi = {
+  list: () => request<any>(INDUSTRY_TAGS.LIST),
+  get: (tagId: string) => request<any>(INDUSTRY_TAGS.GET(tagId)),
+  create: (data: any) => request<any>(INDUSTRY_TAGS.CREATE, { method: 'POST', body: JSON.stringify(data) }),
+  update: (tagId: string, data: any) => request<any>(INDUSTRY_TAGS.UPDATE(tagId), { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (tagId: string) => request<void>(INDUSTRY_TAGS.REMOVE(tagId), { method: 'DELETE' }),
+  getReferences: (tagId: string) => request<any>(INDUSTRY_TAGS.GET_REFERENCES(tagId)),
+  getByIndustry: (industry: string) => request<any>(INDUSTRY_TAGS.GET_BY_INDUSTRY(industry)),
+  getIndustries: () => request<any>(INDUSTRY_TAGS.GET_INDUSTRIES),
+  getStats: () => request<any>(INDUSTRY_TAGS.GET_STATS),
+  agentTags: (agentId: string) => request<any>(INDUSTRY_TAGS.AGENT_TAGS + `?agent_id=${agentId}`),
+  agentTagRecommend: (agentId: string) => request<any>(INDUSTRY_TAGS.AGENT_TAG_RECOMMEND + `?agent_id=${agentId}`),
+}
+
 export const AttachmentUploaderApi = attachmentsApi
+
+// ==================== Knowledge API (Sprint 75 Phase 2) ====================
+
+export const knowledgeApi = {
+  list: (params?: { pack_id?: string; category?: string; search?: string; page?: number; page_size?: number }) =>
+    request<{ items: KnowledgeEntry[]; total: number; page: number; page_size: number }>(KNOWLEDGE.LIST, { params: params || {} }),
+  get: (id: string) => request<KnowledgeEntry>(KNOWLEDGE.GET(id)),
+  create: (data: KnowledgeCreate) => request<KnowledgeEntry>(KNOWLEDGE.CREATE, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: KnowledgeUpdate) => request<KnowledgeEntry>(KNOWLEDGE.UPDATE(id), { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id: string) => request<{ success: boolean; id: string }>(KNOWLEDGE.REMOVE(id), { method: 'DELETE' }),
+}
+
+export const agentSchemesApi = {
+  list: (params?: { pack_id?: string; page?: number; page_size?: number }) =>
+    request<{ items: AgentScheme[]; total: number; page: number; page_size: number }>(AGENT_SCHEMES.LIST, { params: params || {} }),
+  get: (id: string) => request<AgentScheme>(AGENT_SCHEMES.GET(id)),
+  create: (data: AgentSchemeCreate) => request<AgentScheme>(AGENT_SCHEMES.CREATE, { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: AgentSchemeUpdate) => request<AgentScheme>(AGENT_SCHEMES.UPDATE(id), { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (id: string) => request<{ success: boolean; id: string }>(AGENT_SCHEMES.REMOVE(id), { method: 'DELETE' }),
+  listRoles: (schemeId: string) =>
+    request<{ items: AgentSchemeRole[]; total: number }>(AGENT_SCHEMES.LIST_ROLES(schemeId)),
+  createRole: (schemeId: string, data: { role_name: string; required_tags: string[]; priority?: number }) =>
+    request<AgentSchemeRole>(AGENT_SCHEMES.CREATE_ROLE(schemeId), { method: 'POST', body: JSON.stringify(data) }),
+  removeRole: (schemeId: string, roleId: string) =>
+    request<{ success: boolean; id: string }>(AGENT_SCHEMES.REMOVE_ROLE(schemeId, roleId), { method: 'DELETE' }),
+}

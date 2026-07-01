@@ -19,7 +19,7 @@ router = APIRouter()
 @router.post("/{goal_id}/assign-tasks")
 def assign_goal_tasks(goal_id: str):
     """一键分配目标下所有未分配任务（调用匹配引擎）"""
-    db = get_db_session()
+    db = next(get_db_session())
     try:
         from reins.scheduler.task_assigner import TaskAssigner
         from persistence.database import DatabaseManager
@@ -27,7 +27,7 @@ def assign_goal_tasks(goal_id: str):
 
         goal = db.query(Goal).filter(Goal.id == goal_id).first()
         if not goal:
-            raise HTTPException(status_code=404, detail="Goal not found")
+            raise HTTPException(status_code=404, detail={"error": "GOAL_NOT_FOUND", "message": "Goal not found"})
 
         # 获取目标下所有待分配任务
         project_ids = [p.id for p in db.query(Project).filter(Project.goal_id == goal_id).all()]
@@ -48,17 +48,13 @@ def assign_goal_tasks(goal_id: str):
         ).count()
 
         return {"success": True, "goal_id": goal_id, "assigned_count": assigned_count}
-    except Exception as e:
-        logger.error(f"[goal assign] failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if db:
-            db.close()
+        db.close()
 
 @router.post("/projects/{project_id}/assign-tasks")
 def assign_project_tasks(project_id: str):
     """一键分配项目下所有未分配任务（调用匹配引擎）"""
-    db = get_db_session()
+    db = next(get_db_session())
     try:
         from reins.scheduler.task_assigner import TaskAssigner
         from persistence.database import DatabaseManager
@@ -66,7 +62,7 @@ def assign_project_tasks(project_id: str):
 
         project = db.query(Project).filter(Project.id == project_id).first()
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail={"error": "PROJECT_NOT_FOUND", "message": "Project not found"})
 
         import os
         db_path = os.environ.get("SQLITE_PATH", r"D:\work\research\agents-nexus\data\reins.db")
@@ -82,12 +78,8 @@ def assign_project_tasks(project_id: str):
         ).count()
 
         return {"success": True, "project_id": project_id, "assigned_count": assigned_count}
-    except Exception as e:
-        logger.error(f"[project assign] failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if db:
-            db.close()
+        db.close()
 
 class SubmitProjectRequest(BaseModel):
     """用户编辑后提交的项目"""
@@ -117,7 +109,7 @@ def submit_decomposed_projects(
     Sprint 85 增强：分解完成后不触发自动分配，
     由 TaskAssigner.assign_pending_tasks() 统一处理。
     """
-    db = get_db_session()
+    db = next(get_db_session())
 
     try:
         goal = db.query(Goal).filter(Goal.id == goal_id).first()

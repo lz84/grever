@@ -17,14 +17,14 @@
     },
     "database": {
       "type": "sqlite",
-      "path": "D:\\work\\research\\agents-nexus\\packages\\server\\data\\reins.db",
+      "path": "D:\\work\\research\\agents-grever\\packages\\server\\data\\reins.db",
       "backup_enabled": true,
       "backup_retention_days": 30
     },
     "logging": {
       "level": "INFO",
       "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-      "file": "D:\\work\\research\\agents-nexus\\logs\\app.log"
+      "file": "D:\\work\\research\\agents-grever\\logs\\app.log"
     },
     "security": {
       "jwt_secret": "${JWT_SECRET}",

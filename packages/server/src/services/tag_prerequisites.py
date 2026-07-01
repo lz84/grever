@@ -7,6 +7,7 @@
 import json
 from loguru import logger
 from typing import Dict, List, Set, Optional
+from sqlalchemy.orm import Session
 
 from reins.common.database import get_db_session
 from models.industry_tag import IndustryCapabilityTag
@@ -148,7 +149,7 @@ def detect_circular_dependencies(tag_ids: List[str], max_depth: int = 10) -> Lis
 
     return cycles
 
-def resolve_all_prerequisites(tag_ids: List[str], max_depth: int = 10) -> List[str]:
+def resolve_all_prerequisites(tag_ids: List[str], max_depth: int = 10, session: Optional[Session] = None) -> List[str]:
     """
     递归解析所有 prerequisites，返回完整标签 ID 列表（含原始标签 + 所有前置）。
 
@@ -174,9 +175,13 @@ def resolve_all_prerequisites(tag_ids: List[str], max_depth: int = 10) -> List[s
         ids_to_fetch = [tid for tid in ids if tid not in graph]
 
         if ids_to_fetch:
-            session = get_db_session()
+            should_close = False
+            _local_session = session
+            if _local_session is None:
+                _local_session = get_db_session()
+                should_close = True
             try:
-                tags = session.query(IndustryCapabilityTag).filter(
+                tags = _local_session.query(IndustryCapabilityTag).filter(
                     IndustryCapabilityTag.id.in_(ids_to_fetch)
                 ).all()
                 for tag in tags:
@@ -185,7 +190,8 @@ def resolve_all_prerequisites(tag_ids: List[str], max_depth: int = 10) -> List[s
                     if tid not in graph:
                         graph[tid] = []
             finally:
-                session.close()
+                if should_close:
+                    _local_session.close()
 
         for tid in ids:
             if tid in visited:
@@ -200,13 +206,14 @@ def resolve_all_prerequisites(tag_ids: List[str], max_depth: int = 10) -> List[s
 
     return list(resolveRecursive(list(tag_ids), 0))
 
-def validate_prerequisites(tag_ids: List[str], max_depth: int = 10) -> Dict[str, List[str]]:
+def validate_prerequisites(tag_ids: List[str], max_depth: int = 10, session: Optional[Session] = None) -> Dict[str, List[str]]:
     """
     验证标签列表的 prerequisites 是否全部满足。
 
     Args:
         tag_ids: 待验证的标签 ID 列表
         max_depth: 最大递归深度限制
+        session: 可选的外部 session（避免创建独立 session 干扰事务）
 
     Returns:
         {tag_id: [missing_prerequisites]}，空字典表示全部满足
@@ -219,16 +226,20 @@ def validate_prerequisites(tag_ids: List[str], max_depth: int = 10) -> Dict[str,
     if cycles:
         raise CircularDependencyError(cycles[0])
 
-    # 2. 递归展开所有 prerequisites（用于环形检测）
-    resolve_all_prerequisites(tag_ids, max_depth)
+    # 2. 递归展开所有 prerequisites（传入 session 避免独立事务干扰）
+    resolve_all_prerequisites(tag_ids, max_depth, session=session)
     # all_tag_set: 仅用户提供的标签（不去递归展开）
     all_tag_set = set(tag_ids)
 
     # 3. 检查每个原始标签的 prerequisites 是否在展开集合中
     missing: Dict[str, List[str]] = {}
-    session = get_db_session()
+    should_close = False
+    _local_session = session
+    if _local_session is None:
+        _local_session = get_db_session()
+        should_close = True
     try:
-        tags = session.query(IndustryCapabilityTag).filter(
+        tags = _local_session.query(IndustryCapabilityTag).filter(
             IndustryCapabilityTag.id.in_(tag_ids)
         ).all()
         for tag in tags:
@@ -237,16 +248,18 @@ def validate_prerequisites(tag_ids: List[str], max_depth: int = 10) -> Dict[str,
             if missing_list:
                 missing[tag.id] = missing_list
     finally:
-        session.close()
+        if should_close:
+            _local_session.close()
 
     return missing
 
-def check_deprecated_tags(tag_ids: List[str]) -> List[dict]:
+def check_deprecated_tags(tag_ids: List[str], session: Optional[Session] = None) -> List[dict]:
     """
     检查标签列表中是否有 deprecated 或 replaced_by 的标签。
 
     Args:
         tag_ids: 待检查的标签 ID 列表
+        session: 可选的外部 session（避免创建独立 session 干扰事务）
 
     Returns:
         警告列表：[{"tag_id": "...", "status": "deprecated", "replaced_by": "..."}]
@@ -254,13 +267,18 @@ def check_deprecated_tags(tag_ids: List[str]) -> List[dict]:
     if not tag_ids:
         return []
 
-    session = get_db_session()
+    should_close = False
+    _local_session = session
+    if _local_session is None:
+        _local_session = get_db_session()
+        should_close = True
     try:
-        tags = session.query(IndustryCapabilityTag).filter(
+        tags = _local_session.query(IndustryCapabilityTag).filter(
             IndustryCapabilityTag.id.in_(tag_ids)
         ).all()
     finally:
-        session.close()
+        if should_close:
+            _local_session.close()
 
     warnings = []
     for tag in tags:

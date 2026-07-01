@@ -1,5 +1,5 @@
 """
-Nexus 全局异常处理器
+Grever 全局异常处理器
 
 所有 API 错误通过这里统一返回格式：
 
@@ -17,13 +17,13 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.error_codes import (
-    NexusErrorCode,
+    GreverErrorCode,
     ERROR_CODE_TO_STATUS,
     ERROR_CODE_TO_MESSAGE,
 )
 
 def make_error_response(
-    error_code: NexusErrorCode,
+    error_code: GreverErrorCode,
     message: str = None,
     details: dict = None,
     http_status: int = None,
@@ -52,7 +52,7 @@ async def nexus_http_exception_handler(request: Request, exc: HTTPException) -> 
     
     # 通用 HTTPException → 根据状态码推断错误码
     status_to_code = {v: k for k, v in ERROR_CODE_TO_STATUS.items()}
-    error_code = status_to_code.get(exc.status_code, NexusErrorCode.INTERNAL_ERROR)
+    error_code = status_to_code.get(exc.status_code, GreverErrorCode.INTERNAL_ERROR)
     
     return JSONResponse(
         status_code=exc.status_code,
@@ -67,7 +67,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         errors.append({"field": loc, "message": err["msg"], "type": err["type"]})
     
     content = make_error_response(
-        NexusErrorCode.VALIDATION_ERROR,
+        GreverErrorCode.VALIDATION_ERROR,
         message="参数校验失败",
         details={"validation_errors": errors},
     )
@@ -86,7 +86,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     return JSONResponse(
         status_code=500,
         content=make_error_response(
-            NexusErrorCode.INTERNAL_ERROR,
+            GreverErrorCode.INTERNAL_ERROR,
             message="服务器内部错误",
             details=exc_details,
         ),

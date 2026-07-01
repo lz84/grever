@@ -27,9 +27,10 @@ def list_knowledge(
             "status": "success",
             "total": len(cognitions),
             "cognitions": cognitions,
+            "items": cognitions,
         }
     except Exception as e:
-        return {"status": "error", "error": str(e), "total": 0, "cognitions": []}
+        return {"status": "error", "error": str(e), "total": 0, "cognitions": [], "items": []}
 
 @router.get("/graph")
 def get_graph(q: Optional[str] = Query(default=None, description="Search keyword")):

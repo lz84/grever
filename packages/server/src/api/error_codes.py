@@ -1,5 +1,5 @@
 """
-Nexus 错误码定义
+Grever 错误码定义
 
 所有 API 错误必须使用这里定义的错误码，
 禁止在代码中直接返回字符串错误信息。
@@ -7,8 +7,8 @@ Nexus 错误码定义
 
 from enum import Enum
 
-class NexusErrorCode(str, Enum):
-    """Nexus 系统错误码"""
+class GreverErrorCode(str, Enum):
+    """Grever 系统错误码"""
 
     # ========== 通用错误（1xxx）==========
     INTERNAL_ERROR = "INTERNAL_ERROR"              # 内部错误
@@ -60,84 +60,84 @@ class NexusErrorCode(str, Enum):
 
 # 错误码 → HTTP 状态码映射
 ERROR_CODE_TO_STATUS = {
-    NexusErrorCode.INTERNAL_ERROR: 500,
-    NexusErrorCode.VALIDATION_ERROR: 400,
-    NexusErrorCode.NOT_FOUND: 404,
-    NexusErrorCode.DUPLICATE_ENTRY: 409,
-    NexusErrorCode.INVALID_STATE: 400,
+    GreverErrorCode.INTERNAL_ERROR: 500,
+    GreverErrorCode.VALIDATION_ERROR: 400,
+    GreverErrorCode.NOT_FOUND: 404,
+    GreverErrorCode.DUPLICATE_ENTRY: 409,
+    GreverErrorCode.INVALID_STATE: 400,
 
-    NexusErrorCode.TASK_NOT_FOUND: 404,
-    NexusErrorCode.TASK_IN_INVALID_STATE: 400,
-    NexusErrorCode.ACCEPTANCE_CRITERIA_REQUIRED: 400,
-    NexusErrorCode.TASK_NOT_ASSIGNABLE: 400,
-    NexusErrorCode.TASK_BLOCKED_BY_DEPENDENCIES: 400,
-    NexusErrorCode.TASK_RETRY_EXHAUSTED: 400,
-    NexusErrorCode.TASK_TIMEOUT: 400,
+    GreverErrorCode.TASK_NOT_FOUND: 404,
+    GreverErrorCode.TASK_IN_INVALID_STATE: 400,
+    GreverErrorCode.ACCEPTANCE_CRITERIA_REQUIRED: 400,
+    GreverErrorCode.TASK_NOT_ASSIGNABLE: 400,
+    GreverErrorCode.TASK_BLOCKED_BY_DEPENDENCIES: 400,
+    GreverErrorCode.TASK_RETRY_EXHAUSTED: 400,
+    GreverErrorCode.TASK_TIMEOUT: 400,
 
-    NexusErrorCode.GOAL_NOT_FOUND: 404,
-    NexusErrorCode.GOAL_IN_INVALID_STATE: 400,
+    GreverErrorCode.GOAL_NOT_FOUND: 404,
+    GreverErrorCode.GOAL_IN_INVALID_STATE: 400,
 
-    NexusErrorCode.PROJECT_NOT_FOUND: 404,
-    NexusErrorCode.PROJECT_IN_INVALID_STATE: 400,
+    GreverErrorCode.PROJECT_NOT_FOUND: 404,
+    GreverErrorCode.PROJECT_IN_INVALID_STATE: 400,
 
-    NexusErrorCode.AGENT_NOT_FOUND: 404,
-    NexusErrorCode.AGENT_OFFLINE: 400,
-    NexusErrorCode.AGENT_CAPACITY_FULL: 400,
+    GreverErrorCode.AGENT_NOT_FOUND: 404,
+    GreverErrorCode.AGENT_OFFLINE: 400,
+    GreverErrorCode.AGENT_CAPACITY_FULL: 400,
 
-    NexusErrorCode.WORKFLOW_NOT_FOUND: 404,
-    NexusErrorCode.WORKFLOW_STEP_NOT_FOUND: 404,
-    NexusErrorCode.WORKFLOW_INVALID_STATE: 400,
+    GreverErrorCode.WORKFLOW_NOT_FOUND: 404,
+    GreverErrorCode.WORKFLOW_STEP_NOT_FOUND: 404,
+    GreverErrorCode.WORKFLOW_INVALID_STATE: 400,
 
-    NexusErrorCode.VERIFICATION_FAILED: 400,
-    NexusErrorCode.VERIFICATION_TIMEOUT: 400,
-    NexusErrorCode.VERIFICATION_CYCLE_EXCEEDED: 400,
+    GreverErrorCode.VERIFICATION_FAILED: 400,
+    GreverErrorCode.VERIFICATION_TIMEOUT: 400,
+    GreverErrorCode.VERIFICATION_CYCLE_EXCEEDED: 400,
 
-    NexusErrorCode.NO_AVAILABLE_AGENT: 503,
-    NexusErrorCode.SCHEDULER_ERROR: 500,
+    GreverErrorCode.NO_AVAILABLE_AGENT: 503,
+    GreverErrorCode.SCHEDULER_ERROR: 500,
 
-    NexusErrorCode.DB_CONNECTION_ERROR: 503,
-    NexusErrorCode.DB_WRITE_ERROR: 500,
-    NexusErrorCode.DB_CONSTRAINT_VIOLATION: 409,
+    GreverErrorCode.DB_CONNECTION_ERROR: 503,
+    GreverErrorCode.DB_WRITE_ERROR: 500,
+    GreverErrorCode.DB_CONSTRAINT_VIOLATION: 409,
 }
 
 # 错误码 → 中文消息映射
 ERROR_CODE_TO_MESSAGE = {
-    NexusErrorCode.INTERNAL_ERROR: "内部错误",
-    NexusErrorCode.VALIDATION_ERROR: "参数校验失败",
-    NexusErrorCode.NOT_FOUND: "资源不存在",
-    NexusErrorCode.DUPLICATE_ENTRY: "重复条目",
-    NexusErrorCode.INVALID_STATE: "状态不合法",
+    GreverErrorCode.INTERNAL_ERROR: "内部错误",
+    GreverErrorCode.VALIDATION_ERROR: "参数校验失败",
+    GreverErrorCode.NOT_FOUND: "资源不存在",
+    GreverErrorCode.DUPLICATE_ENTRY: "重复条目",
+    GreverErrorCode.INVALID_STATE: "状态不合法",
 
-    NexusErrorCode.TASK_NOT_FOUND: "任务不存在",
-    NexusErrorCode.TASK_IN_INVALID_STATE: "任务状态不合法，无法执行此操作",
-    NexusErrorCode.ACCEPTANCE_CRITERIA_REQUIRED: "必须设置 acceptance_criteria",
-    NexusErrorCode.TASK_NOT_ASSIGNABLE: "任务不可分配",
-    NexusErrorCode.TASK_BLOCKED_BY_DEPENDENCIES: "任务被依赖阻塞",
-    NexusErrorCode.TASK_RETRY_EXHAUSTED: "任务重试次数已耗尽",
-    NexusErrorCode.TASK_TIMEOUT: "任务执行超时",
+    GreverErrorCode.TASK_NOT_FOUND: "任务不存在",
+    GreverErrorCode.TASK_IN_INVALID_STATE: "任务状态不合法，无法执行此操作",
+    GreverErrorCode.ACCEPTANCE_CRITERIA_REQUIRED: "必须设置 acceptance_criteria",
+    GreverErrorCode.TASK_NOT_ASSIGNABLE: "任务不可分配",
+    GreverErrorCode.TASK_BLOCKED_BY_DEPENDENCIES: "任务被依赖阻塞",
+    GreverErrorCode.TASK_RETRY_EXHAUSTED: "任务重试次数已耗尽",
+    GreverErrorCode.TASK_TIMEOUT: "任务执行超时",
 
-    NexusErrorCode.GOAL_NOT_FOUND: "目标不存在",
-    NexusErrorCode.GOAL_IN_INVALID_STATE: "目标状态不合法",
+    GreverErrorCode.GOAL_NOT_FOUND: "目标不存在",
+    GreverErrorCode.GOAL_IN_INVALID_STATE: "目标状态不合法",
 
-    NexusErrorCode.PROJECT_NOT_FOUND: "项目不存在",
-    NexusErrorCode.PROJECT_IN_INVALID_STATE: "项目状态不合法",
+    GreverErrorCode.PROJECT_NOT_FOUND: "项目不存在",
+    GreverErrorCode.PROJECT_IN_INVALID_STATE: "项目状态不合法",
 
-    NexusErrorCode.AGENT_NOT_FOUND: "Agent 不存在",
-    NexusErrorCode.AGENT_OFFLINE: "Agent 已离线",
-    NexusErrorCode.AGENT_CAPACITY_FULL: "Agent 容量已满",
+    GreverErrorCode.AGENT_NOT_FOUND: "Agent 不存在",
+    GreverErrorCode.AGENT_OFFLINE: "Agent 已离线",
+    GreverErrorCode.AGENT_CAPACITY_FULL: "Agent 容量已满",
 
-    NexusErrorCode.WORKFLOW_NOT_FOUND: "工作流不存在",
-    NexusErrorCode.WORKFLOW_STEP_NOT_FOUND: "工作流步骤不存在",
-    NexusErrorCode.WORKFLOW_INVALID_STATE: "工作流状态不合法",
+    GreverErrorCode.WORKFLOW_NOT_FOUND: "工作流不存在",
+    GreverErrorCode.WORKFLOW_STEP_NOT_FOUND: "工作流步骤不存在",
+    GreverErrorCode.WORKFLOW_INVALID_STATE: "工作流状态不合法",
 
-    NexusErrorCode.VERIFICATION_FAILED: "验证失败",
-    NexusErrorCode.VERIFICATION_TIMEOUT: "验证超时",
-    NexusErrorCode.VERIFICATION_CYCLE_EXCEEDED: "验证循环次数超限",
+    GreverErrorCode.VERIFICATION_FAILED: "验证失败",
+    GreverErrorCode.VERIFICATION_TIMEOUT: "验证超时",
+    GreverErrorCode.VERIFICATION_CYCLE_EXCEEDED: "验证循环次数超限",
 
-    NexusErrorCode.NO_AVAILABLE_AGENT: "没有可用 Agent",
-    NexusErrorCode.SCHEDULER_ERROR: "调度器错误",
+    GreverErrorCode.NO_AVAILABLE_AGENT: "没有可用 Agent",
+    GreverErrorCode.SCHEDULER_ERROR: "调度器错误",
 
-    NexusErrorCode.DB_CONNECTION_ERROR: "数据库连接错误",
-    NexusErrorCode.DB_WRITE_ERROR: "数据库写入错误",
-    NexusErrorCode.DB_CONSTRAINT_VIOLATION: "数据约束违反",
+    GreverErrorCode.DB_CONNECTION_ERROR: "数据库连接错误",
+    GreverErrorCode.DB_WRITE_ERROR: "数据库写入错误",
+    GreverErrorCode.DB_CONSTRAINT_VIOLATION: "数据约束违反",
 }

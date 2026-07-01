@@ -1,11 +1,10 @@
-from sqlalchemy import text
-from fastapi import HTTPException
-# -*- coding: utf-8 -*-
 from loguru import logger
 
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from reins.common.database import get_db
+from models.solution import Solution
 
 from fastapi import APIRouter
 router = APIRouter()
@@ -103,7 +102,8 @@ def _generate_ai_reply(content: str, goal_id: str, db: Session) -> str:
                f"3. 细化评估维度，更精准筛选\n" \
                f"请告诉我你希望调整哪些约束条件？"
     else:
-        return f"收到你的反馈。当前方案库共有 {len(db.execute(text('SELECT COUNT(*) FROM solutions WHERE goal_id = :gid'), {'gid': goal_id}).fetchone())} 个方案。\n" \
+        sol_count = db.query(func.count(Solution.id)).filter(Solution.goal_id == goal_id).scalar() or 0
+        return f"收到你的反馈。当前方案库共有 {sol_count} 个方案。\n" \
                f"你可以：\n" \
                f"• 提出问题（如'能换成开源方案吗？'）\n" \
                f"• 表达偏好（如'成本太高了'、'需要更好的性能'）\n" \

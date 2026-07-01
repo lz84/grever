@@ -1,6 +1,9 @@
 ﻿import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ErrorBoundary } from './shared/components/ErrorBoundary'
 import MainLayout from './layout/MainLayout'
+import { useEffect } from 'react'
+import { setAgentCache } from './shared/utils/agentMap'
+import { agentsApi } from './shared/utils/api'
 
 // shared
 import Dashboard from './pages/system/Dashboard'
@@ -41,6 +44,7 @@ import ScenarioDetail from './pages/reach/scenario/ScenarioDetail'
 import ScenarioFavorites from './pages/reach/scenario/ScenarioFavorites'
 import ScenarioCenter from './pages/reach/scenario/ScenarioCenter'
 import ScenarioCreate from './pages/reach/scenario/ScenarioCreate'
+import ScenarioDecomposePage from './pages/reach/scenario/ScenarioDecomposePage'
 import IndustryTagsPage from './pages/reach/IndustryTagsPage'
 import IndustryPacksPage from './pages/industry/IndustryPacksPage'
 import IndustryPackDetailPage from './pages/industry/IndustryPackDetailPage'
@@ -63,6 +67,13 @@ import RulingsPage from './pages/vigil/RulingsPage'
 import HumanInputStatsWidget from './shared/components/HumanInputStatsWidget'
 
 export default function App() {
+  // Load agent names from DB at startup (replaces hardcoded agentMap)
+  useEffect(() => {
+    agentsApi.list()
+      .then(agents => setAgentCache(agents))
+      .catch(() => {/* agents not critical for app boot */})
+  }, [])
+
   return (
     <BrowserRouter>
       <ErrorBoundary>
@@ -101,6 +112,7 @@ export default function App() {
           <Route path="/scenarios" element={<ScenarioList />} />
           <Route path="/scenarios/starred" element={<ScenarioFavorites />} />
           <Route path="/scenarios/:id" element={<ScenarioDetail />} />
+          <Route path="/scenarios/:id/diagram" element={<ScenarioDecomposePage />} />
           <Route path="/scenarios/new" element={<ScenarioCreate />} />
 
           {/* 安全中心 */}
@@ -119,7 +131,8 @@ export default function App() {
           {/* 可视化 */}
           <Route path="/visual/dashboard" element={<VisualBoard />} />
           <Route path="/visual/traces" element={<TraceViewer />} />
-          <Route path="/goals/:id/tree" element={<GoalDecomposePage />} />
+          <Route path="/goals/:id/tree" element={<GoalTreeView />} />
+          <Route path="/goals/:id/diagram" element={<GoalDecomposePage />} />
           <Route path="/rulings" element={<RulingsPage />} />
 
           {/* 系统设置 */}

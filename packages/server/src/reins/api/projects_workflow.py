@@ -2,6 +2,7 @@
 import json
 from fastapi import APIRouter, HTTPException, Query
 from reins.common.database import get_db_manager
+from reins.scheduler.statemachine import transition_task_status
 from sqlalchemy import text
 
 router = APIRouter()
@@ -164,11 +165,24 @@ def update_project_status(project_id: str, status: str = Query(..., description=
         tasks_affected = 0
         
         if status == "on_hold" and current_status in ("active", "in_progress"):
-            r1 = conn.execute(text(
-                "UPDATE tasks SET status='todo' WHERE project_id=:pid AND status='in_progress'"
-            ), {"pid": project_id})
-            tasks_affected = r1.rowcount
-        
+            from models.task import Task
+            from reins.common.database import get_db_manager
+            db = get_db_manager().get_session()
+            try:
+                in_progress_tasks = db.query(Task).filter(
+                    Task.project_id == project_id,
+                    Task.status == "in_progress",
+                ).all()
+                for task in in_progress_tasks:
+                    transition_task_status(
+                        db, task, "todo",
+                        reason=f"项目 {project_id} 被暂停 (on_hold)",
+                    )
+                tasks_affected = len(in_progress_tasks)
+                db.commit()
+            finally:
+                db.close()
+
         conn.execute(text(
             "UPDATE projects SET status=:st WHERE id=:pid"
         ), {"pid": project_id, "st": status})

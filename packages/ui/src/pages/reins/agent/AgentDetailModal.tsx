@@ -1,7 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react'
-import { INDUSTRY_TAGS } from '../../../shared/api/paths'
 import { toast } from "sonner"
-import { agentsApi } from '../../../shared/utils/api'
+import { agentsApi, industryTagsApi } from '../../../shared/utils/api'
 import type { Agent } from '../../../shared/utils/api'
 import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
@@ -534,6 +533,7 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
 
   // Config tab
   const [configMaxTasks, setConfigMaxTasks] = useState<number>(0)
+  const [configAgentCode, setConfigAgentCode] = useState<string>('')
   const [savingConfig, setSavingConfig] = useState(false)
 
   // Load tab
@@ -583,6 +583,7 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
         if (!cancelled) {
           setDetail(data)
           setConfigMaxTasks(data.max_concurrent_tasks || 0)
+          setConfigAgentCode(data.agent_code || '')
           setTriggerMode(data.trigger_mode || 'polling')
         }
       })
@@ -640,7 +641,7 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
     setLoadingPending(true)
     agentsApi.getPendingTasks(agent.id)
       .then(data => {
-        const tasks = Array.isArray(data) ? data : (data as any).tasks || []
+        const tasks = Array.isArray(data) ? data : (data as any).pending_tasks || (data as any).tasks || []
         setPendingTasks(tasks)
       })
       .catch(e => {
@@ -654,9 +655,7 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
   async function fetchIndustryTags(agentData: Agent) {
     setLoadingTags(true)
     try {
-      const res = await fetch(INDUSTRY_TAGS.AGENT_TAGS + `?agent_id=${agentData.id}`)
-      if (!res.ok) throw new Error('API error')
-      const data = await res.json()
+      const data = await industryTagsApi.agentTags(agentData.id)
       const results: AgentTagWithInfo[] = [
         ...(data.manual_tags || []).map((t: any) => ({
           tagId: t.tag_id,
@@ -683,12 +682,9 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
   // Fetch all available industry tags for the multi-select dialog
   async function fetchAvailableTags() {
     try {
-      const res = await fetch(INDUSTRY_TAGS.LIST)
-      if (res.ok) {
-        const data = await res.json()
-        const tags: { tag_id: string; tag_name: string; dimension: string }[] = data.items || data.tags || data || []
-        setAvailableTags(tags)
-      }
+      const data: any = await industryTagsApi.list()
+      const tags: { tag_id: string; tag_name: string; dimension: string }[] = data.items || data.tags || data || []
+      setAvailableTags(tags)
     } catch (e) {
       console.error('fetch available tags error', e)
     }
@@ -744,17 +740,14 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
   async function fetchTagRecommendations(agentData: Agent) {
     setLoadingRecommend(true)
     try {
-      const res = await fetch(INDUSTRY_TAGS.AGENT_TAG_RECOMMEND + `?agent_id=${agentData.id}`)
-      if (res.ok) {
-        const data = await res.json()
-        // API returns {recommended: {dim: [...]}, current: {...}, missing: [...]}
-        const currentIds = new Set(industryTags.map(t => t.tagId))
-        const recs: TagRecommendation[] = (data.missing || [])
+      const data: any = await industryTagsApi.agentTagRecommend(agentData.id)
+      // API returns {recommended: {dim: [...]}, current: {...}, missing: [...]}
+      const currentIds = new Set(industryTags.map(t => t.tagId))
+      const recs: TagRecommendation[] = (data.missing || [])
           .filter((tid: string) => !currentIds.has(tid))
           .slice(0, 20)
           .map((tid: string) => ({ tag_id: tid, tag_name: tid, dimension: '', score: 0, reason: '推荐配置' }))
         setRecommendedTags(recs)
-      }
     } catch (e) {
       console.error('fetch tag recommendations error', e)
     } finally {
@@ -787,12 +780,13 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
     if (!agent?.id) return
     setSavingConfig(true)
     try {
-      await agentsApi.updateConfig(agent.id, { max_concurrent_tasks: configMaxTasks })
+      await agentsApi.updateConfig(agent.id, { max_concurrent_tasks: configMaxTasks, agent_code: configAgentCode || null })
       toast.success('配置已更新')
       onRefresh?.()
       // Refresh detail
       const updated = await agentsApi.get(agent.id)
       setDetail(updated)
+      setConfigAgentCode(updated.agent_code || '')
     } catch (e: any) {
       toast.error('更新配置失败: ' + (e.message || 'unknown'))
     } finally {
@@ -912,6 +906,25 @@ export default function AgentDetailModal({ agent, onClose, onRefresh }: AgentDet
                     保存
                   </Button>
                 </div>
+              </div>
+
+              {/* Update agent_code */}
+              <div className="space-y-2">
+                <Label htmlFor="agentCode">Agent Code（OpenClaw agent 标识）</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="agentCode"
+                    placeholder="例如: main, mazi, guzi"
+                    value={configAgentCode}
+                    onChange={e => setConfigAgentCode(e.target.value)}
+                    className="w-48"
+                  />
+                  <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig}>
+                    {savingConfig ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    保存
+                  </Button>
+                </div>
+                <p className="text-[10px] text-slate-400">用于替换代码中的硬编码 UUID 映射。留空则 fallback 到默认值。</p>
               </div>
 
               {/* Update trigger mode */}

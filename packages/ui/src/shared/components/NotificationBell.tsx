@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { HUMAN_REVIEW } from '../api/paths';
+import { humanReviewApi } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { Bell } from 'lucide-react';
 import { Button } from '@/shared/components/ui/button';
@@ -27,13 +27,10 @@ export default function NotificationBell({ placement = 'header' }: Props) {
     
     const fetchNotifications = async () => {
       try {
-        const response = await fetch(HUMAN_REVIEW.GET_STATS);
-        if (response.ok) {
-          const data = await response.json();
-          const totalCount = (data.disputed_count || 0) + (data.waiting_human_count || 0) + (data.pending_count || 0);
-          setNotificationCount(totalCount);
-          setRecentNotifications(data.recent_pending || data.recent || []);
-        }
+        const data = await humanReviewApi.getStats();
+        const totalCount = (data.disputed_count || 0) + (data.waiting_human_count || 0) + (data.pending_count || 0);
+        setNotificationCount(totalCount);
+        setRecentNotifications(data.recent_pending || data.recent || []);
       } catch {
         // silent
       }

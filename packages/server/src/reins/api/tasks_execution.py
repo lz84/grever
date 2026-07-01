@@ -15,8 +15,9 @@ from sqlalchemy import text
 
 from models.task import Task
 from reins.common.database import get_db
+from reins.scheduler.statemachine import transition_task_status
 from reins.scheduler.assigner.agent_registry import AgentRegistry
-from persistence.tables import task_activity_log, task_failure_log, execution_logs
+from persistence.tables import task_failure_log, execution_logs
 from reins.api.tasks_helpers import _get_goal_id_from_project, _update_goal_progress
 from reins.scheduler.project_executor import ProjectExecutor
 from reins.common.database import get_db_manager
@@ -44,7 +45,7 @@ def report_task_progress(task_id: str, request: TaskProgressRequest, db: Session
     progress_percent = request.progress_percent
     if progress_percent is not None:
         task.progress = progress_percent / 100.0
-        task.updated_at = datetime.now()
+        task.updated_at = int(datetime.now().timestamp())
 
     try:
         db.execute(
@@ -85,22 +86,14 @@ def fail_task(task_id: str, request: FailTaskRequest, db: Session = Depends(get_
     retry_count_base = request.retry_count if request.retry_count is not None else 0
     max_retries = request.max_retries if request.max_retries is not None else task.max_retries or 3
 
-    old_status = task.status
-    task.status = "failed"
-    task.error_type = request.error_type
-    task.error_message = request.error_message
-    task.updated_at = datetime.now()
-    task.description = f"{task.description or ''}\n\nError: {request.error_message}"
-
-    db.execute(
-        task_activity_log.insert().values(
-            id=f"log-{uuid.uuid4().hex[:12]}",
-            task_id=str(task_id),
-            old_status=old_status,
-            new_status="failed",
-            reason=f"Task failed: {request.error_type} - {request.error_message[:100]}",
-            timestamp=datetime.now(),
-        )
+    transition_task_status(
+        db, task, "failed",
+        reason=f"Task failed: {request.error_type} - {request.error_message[:100]}",
+        extra={
+            "error_type": request.error_type,
+            "error_message": request.error_message,
+            "description": f"{task.description or ''}\n\nError: {request.error_message}",
+        },
     )
 
     try:
@@ -128,15 +121,21 @@ def fail_task(task_id: str, request: FailTaskRequest, db: Session = Depends(get_
     next_action = "blocked"
 
     if retry_count_base < max_retries:
-        task.status = "todo"
-        task.assigned_agent = None
-        task.updated_at = datetime.now()
-        task.retry_count = retry_count_base + 1
+        transition_task_status(
+            db, task, "todo",
+            reason=f"Auto retry ({retry_count_base + 1}/{max_retries})",
+            extra={
+                "assigned_agent": None,
+                "retry_count": retry_count_base + 1,
+            },
+        )
         next_action = "retry"
     else:
-        task.status = "blocked"
-        task.blocked_reason = f"Blocked after {retry_count_base} retries. Max retries: {max_retries}"
-        task.updated_at = datetime.now()
+        transition_task_status(
+            db, task, "blocked",
+            reason=f"Blocked after {retry_count_base} retries. Max retries: {max_retries}",
+            extra={"blocked_reason": f"Blocked after {retry_count_base} retries. Max retries: {max_retries}"},
+        )
         next_action = "blocked"
 
     try:
@@ -253,24 +252,12 @@ def retry_task(task_id: str, request: RetryRequest, db: Session = Depends(get_db
             }
         )
 
-    old_status = task.status
     old_retry_count = task.retry_count or 0
 
-    task.status = "todo"
-    task.retry_count = 0
-    # 保留 assigned_agent，不自动换人，让人类决定是否换人
-    task.blocked_reason = None
-    task.updated_at = datetime.now()
-
-    db.execute(
-        task_activity_log.insert().values(
-            id=f"log-{uuid.uuid4().hex[:12]}",
-            task_id=str(task_id),
-            old_status=old_status,
-            new_status="todo",
-            reason=request.reason or f"Manual retry by user (previous retry_count: {old_retry_count})",
-            timestamp=datetime.now(),
-        )
+    transition_task_status(
+        db, task, "todo",
+        reason=request.reason or f"Manual retry by user (previous retry_count: {old_retry_count})",
+        extra={"retry_count": 0, "blocked_reason": None},
     )
 
     db.commit()

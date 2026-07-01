@@ -1,5 +1,5 @@
 """
-Nexus 统一异常处理模块
+Grever 统一异常处理模块
 提供全局异常框架和错误码定义
 
 P5-09 新增：
@@ -10,7 +10,7 @@ P5-09 新增：
 
 # 原有异常（从 exception.exceptions）
 from .exceptions import (
-    NexusException,
+    GreverException,
     BusinessException,
     ValidationException,
     AuthenticationException,
@@ -30,12 +30,12 @@ from .handlers import (
 )
 
 # P5-09 新增：错误码和响应格式
-from .error_codes import ErrorCode as NexusErrorCode
+from .error_codes import ErrorCode as GreverErrorCode
 from .error_response import ErrorResponse, APIError
 
 __all__ = [
     # 原有异常
-    'NexusException',
+    'GreverException',
     'BusinessException',
     'ValidationException',
     'AuthenticationException',
@@ -50,7 +50,7 @@ __all__ = [
     'AgentOfflineError',
     'InvalidStateTransitionError',
     # P5-09 新增
-    'NexusErrorCode',
+    'GreverErrorCode',
     'ErrorResponse',
     'APIError',
 ]

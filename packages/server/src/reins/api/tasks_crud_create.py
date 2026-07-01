@@ -24,10 +24,17 @@ router = APIRouter(tags=["tasks"])
 def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     """Create Task — 统一通过 depends_on 设置依赖，并从 Project 继承 capability_tags"""
     project_id = getattr(task_data, 'project_id', None)
+    # 继承 Project 的 capability_tags（仅当 capability_tags 未设置时）
     if project_id and not getattr(task_data, 'capability_tags', None):
         project = db.query(Project).filter(Project.id == project_id).first()
         if project and project.capability_tags:
             task_data.capability_tags = project._parse_capability_tags()
+    # 如果 capability_tags 仍然为 None，设为空字典（后续验证会处理）
+    if getattr(task_data, 'capability_tags', None) is None:
+        task_data.capability_tags = {}
+    # depends_on 默认空列表
+    if getattr(task_data, 'depends_on', None) is None:
+        task_data.depends_on = []
 
     if project_id and not getattr(task_data, 'goal_id', None):
         project = db.query(Project).filter(Project.id == project_id).first()
@@ -122,7 +129,7 @@ def create_task(task_data: TaskCreate, db: Session = Depends(get_db)):
     task_dict.pop("dependency_ids", None)
     task_dict.pop("strict_mode", None)
     if not task_dict.get("project_id"):
-        task_dict["project_id"] = "proj-nexus-internal"
+        task_dict["project_id"] = "proj-grever-internal"
 
     now_ts = int(time.time())
     task_dict.setdefault("created_at", now_ts)

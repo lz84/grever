@@ -1,5 +1,5 @@
 """
-Nexus Reins - MCP Server API 路由
+Grever Reins - MCP Server API 路由
 
 提供 MCP Server CRUD 和 Agent-MCP 自动匹配功能
 Sprint 37: 麻子 - 后端实现

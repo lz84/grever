@@ -1,5 +1,5 @@
 """
-Nexus Reins 持久化基础模块
+Grever Reins 持久化基础模块
 提供 SQLAlchemy Core 封装和数据库配置
 """
 

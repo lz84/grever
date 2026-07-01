@@ -1,7 +1,7 @@
 /**
  * Industry Pack Export Dialog
  * Sprint 114 F114-1: 导出对话框
- * - 格式选择（.nexus-pack / .json）
+ * - 格式选择（.grever-pack / .json）
  * - 附加资源开关
  * - 文件大小预估
  * - 下载触发（调用 POST /export，触发浏览器下载）
@@ -21,7 +21,7 @@ import { Switch } from '@/shared/components/ui/switch'
 import { Card, CardContent } from '@/shared/components/ui/card'
 import { IndustryPack } from '@/shared/utils/industryTagsApi'
 
-type ExportFormat = 'nexus-pack' | 'json'
+type ExportFormat = 'grever-pack' | 'json'
 
 interface IndustryPackExportDialogProps {
   open: boolean
@@ -34,7 +34,7 @@ export default function IndustryPackExportDialog({
   onOpenChange,
   pack,
 }: IndustryPackExportDialogProps) {
-  const [format, setFormat] = useState<ExportFormat>('nexus-pack')
+  const [format, setFormat] = useState<ExportFormat>('grever-pack')
   const [includeResources, setIncludeResources] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -78,7 +78,7 @@ export default function IndustryPackExportDialog({
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const ext = format === 'nexus-pack' ? '.nexus-pack' : '.json'
+      const ext = format === 'grever-pack' ? '.grever-pack' : '.json'
       a.download = `${pack.id || pack.name}${ext}`
       document.body.appendChild(a)
       a.click()
@@ -127,15 +127,15 @@ export default function IndustryPackExportDialog({
               <button
                 type="button"
                 className={`flex items-center gap-2 p-3 rounded-lg border-2 transition-colors text-sm ${
-                  format === 'nexus-pack'
+                  format === 'grever-pack'
                     ? 'border-blue-500 bg-blue-50 text-blue-700'
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
-                onClick={() => setFormat('nexus-pack')}
+                onClick={() => setFormat('grever-pack')}
               >
                 <Package className="w-4 h-4" />
                 <div className="text-left">
-                  <div className="font-medium">.nexus-pack</div>
+                  <div className="font-medium">.grever-pack</div>
                   <div className="text-xs text-gray-500">完整行业包格式</div>
                 </div>
               </button>

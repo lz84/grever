@@ -104,9 +104,9 @@ def register_agent(agent: AgentRegister):
     # Determine platform_type (default openclaw)
     platform_type = agent.platform_type or "openclaw"
 
-    print(f"[DEBUG register] agent_id={agent.agent_id} name={agent.name} "
-          f"capabilities={agent.capabilities} address={agent.address} "
-          f"metadata={agent.metadata} trigger_mode={tm}")
+    logger.debug(f"[register] agent_id={agent.agent_id} name={agent.name} "
+                 f"capabilities={agent.capabilities} address={agent.address} "
+                 f"metadata={agent.metadata} trigger_mode={tm}")
 
     a = reins.register_agent(
         agent.agent_id, agent.name,
@@ -118,7 +118,7 @@ def register_agent(agent: AgentRegister):
         model_name=agent.model_name or "",
     )
 
-    print(f"[DEBUG register] agent created: {a}")
+    logger.debug(f"[register] agent created: {a}")
 
     # If platform_type is not default 'openclaw' or has platform_config,
     # write to agents_config via direct DB (backward-compatible migration path)
@@ -138,50 +138,34 @@ def _write_agents_config(agent_id: str, platform_type: str, config: dict):
 
     幂等操作：只 INSERT 不覆盖已有记录。
     """
-    import sqlalchemy as sa
-    from sqlalchemy import text
-    from api.app_state import get_db_manager
+    import json as _json
+    from reins.common.database import get_db_session
+    from models.agent import AgentConfig
 
     try:
-        db = get_db_manager()
-        now = datetime.now()
-        with db.engine.begin() as conn:
-            # Check if agents_config table exists
-            table_exists = conn.execute(text(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agents_config'"
-            )).scalar()
-            if not table_exists:
-                return  # Table not created yet, skip
-
-            # Check if record already exists
-            exists = conn.execute(text(
-                "SELECT 1 FROM agents_config WHERE agent_id = :aid"
-            ), {"aid": agent_id}).fetchone()
-
-            import json as _json
+        session = get_db_session()
+        try:
+            now = datetime.now()
+            existing = session.query(AgentConfig).filter(AgentConfig.agent_id == agent_id).first()
             config_json = _json.dumps(config, ensure_ascii=False) if config else "{}"
 
-            if not exists:
-                conn.execute(text(
-                    "INSERT INTO agents_config (agent_id, platform_type, config_json, created_at) "
-                    "VALUES (:agent_id, :platform_type, :config_json, :created_at)"
-                ), {
-                    "agent_id": agent_id,
-                    "platform_type": platform_type,
-                    "config_json": config_json,
-                    "created_at": now,
-                })
+            if not existing:
+                new_config = AgentConfig(
+                    agent_id=agent_id,
+                    platform_type=platform_type,
+                    config_json=config_json,
+                    created_at=now,
+                )
+                session.add(new_config)
             else:
-                conn.execute(text(
-                    "UPDATE agents_config SET platform_type=:platform_type, "
-                    "config_json=:config_json, updated_at=:updated_at "
-                    "WHERE agent_id=:agent_id"
-                ), {
-                    "agent_id": agent_id,
+                session.query(AgentConfig).filter(AgentConfig.agent_id == agent_id).update({
                     "platform_type": platform_type,
                     "config_json": config_json,
                     "updated_at": now,
                 })
+            session.commit()
+        finally:
+            session.close()
     except Exception as e:
         logger.warning(f"[_write_agents_config] Failed to write config for {agent_id}: {e}")
 
@@ -189,72 +173,66 @@ def _write_agents_config(agent_id: str, platform_type: str, config: dict):
 @router.get("/agents", response_model=List[AgentResponse])
 def get_registered_agents():
     """获取已注册 Agent（列出前自动清理心跳超时的 agent）"""
-    from api.app_state import get_db_manager, get_reins
+    from api.app_state import get_reins
+    from reins.common.database import get_db_session
     from reins.scheduler.load_calculator import calc_all_agents_load
-    from sqlalchemy import text
+    from models import Agent
     # 先清理心跳超时的 agent（标记为 offline）
     try:
         reins = get_reins()
         reins.agent_registry.cleanup_dead_agents()
     except Exception:
         pass  # 清理失败不影响列表展示
-    db = get_db_manager()
-    with db.engine.connect() as conn:
-        load_map = calc_all_agents_load(conn)
-        rows = conn.execute(text(
-            "SELECT a.id, a.name, a.capability_tags, a.status, a.address, a.metadata, "
-            "a.trigger_mode, a.poll_interval_seconds, a.model_name, "
-            "a.registered_at, a.last_heartbeat, "
-            "COALESCE(ac.platform_type, 'openclaw') as platform_type "
-            "FROM agents a "
-            "LEFT JOIN agents_config ac ON a.id = ac.agent_id "
-            "ORDER BY a.registered_at DESC"
-        )).fetchall()
-    return [AgentResponse(
-        id=r.id, name=r.name,
-        capability_tags=json.loads(r.capability_tags) if r.capability_tags else {},
-        status=r.status, address=r.address,
-        metadata=json.loads(r.metadata) if r.metadata else {},
-        load=load_map.get(r.id, (0, 0))[0],
-        current_tasks=load_map.get(r.id, (0, 0))[1],
-        trigger_mode=r.trigger_mode or "sse",
-        poll_interval_seconds=r.poll_interval_seconds or 10,
-        model_name=r.model_name or "",
-        registered_at=_to_iso(r.registered_at),
-        last_heartbeat=_to_iso(r.last_heartbeat),
-        platform_type=r.platform_type or "openclaw",
-    ) for r in rows]
+    session = get_db_session()
+    try:
+        load_map = calc_all_agents_load(session)
+        rows = session.query(Agent).order_by(Agent.registered_at.desc()).all()
+        return [AgentResponse(
+            id=r.id, name=r.name,
+            capability_tags=json.loads(r.capability_tags) if r.capability_tags else {},
+            status=r.status, address=r.address,
+            metadata=json.loads(r.meta_data) if r.meta_data else {},
+            load=load_map.get(r.id, (0, 0))[0],
+            current_tasks=load_map.get(r.id, (0, 0))[1],
+            trigger_mode=r.trigger_mode or "sse",
+            poll_interval_seconds=r.poll_interval_seconds or 10,
+            model_name=r.model_name or "",
+            registered_at=_to_iso(r.registered_at),
+            last_heartbeat=_to_iso(r.last_heartbeat),
+            platform_type=r.platform_type if hasattr(r, 'platform_type') else "openclaw",
+        ) for r in rows]
+    finally:
+        session.close()
 
 
 @router.get("/agents/stats")
 def get_agents_stats():
     """统计各状态 Agent 数量"""
-    from api.app_state import get_db_manager
+    from reins.common.database import get_db_session
     from reins.scheduler.load_calculator import calc_all_agents_load
-    from sqlalchemy import text
+    from models import Agent
+    from sqlalchemy import func
 
-    db = get_db_manager()
-    with db.engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT status, trigger_mode, "
-            "COUNT(*) as cnt "
-            "FROM agents GROUP BY status, trigger_mode"
-        )).fetchall()
+    session = get_db_session()
+    try:
+        rows = session.query(Agent.status, Agent.trigger_mode, func.count(Agent.id)).group_by(
+            Agent.status, Agent.trigger_mode
+        ).all()
 
-        # Calculate load and tasks
-        load_map = calc_all_agents_load(conn)
+        load_map = calc_all_agents_load(session)
         total_load = sum(v[0] for v in load_map.values()) if load_map else 0
         avg_load = int(total_load / len(load_map)) if load_map else 0
         total_tasks = sum(v[1] for v in load_map.values()) if load_map else 0
+    finally:
+        session.close()
 
     total = 0
     by_status = {"online": 0, "stale": 0, "offline": 0}
     by_trigger_mode = {}
-    for r in rows:
-        cnt = r.cnt
+    for status, trigger, cnt in rows:
         total += cnt
-        status = r.status or "offline"
-        trigger = r.trigger_mode or "sse"
+        status = status or "offline"
+        trigger = trigger or "sse"
         if status in by_status:
             by_status[status] += cnt
         else:
@@ -301,72 +279,66 @@ def get_online_agents():
 @router.get("/agents/{agent_id}")
 def get_agent_detail(agent_id: str):
     """获取单个 Agent 详情（含配置字段）"""
-    from api.app_state import get_db_manager
+    from reins.common.database import get_db_session
     from reins.scheduler.load_calculator import calc_dynamic_load
-    from sqlalchemy import text
-    db = get_db_manager()
-    with db.engine.connect() as conn:
-        row = conn.execute(text(
-            "SELECT a.id, a.name, a.capability_tags, a.status, a.address, a.metadata, "
-            "a.trigger_mode, a.poll_interval_seconds, "
-            "a.model_name, a.registered_at, a.last_heartbeat, a.max_concurrent_tasks, "
-            "a.load_threshold, a.health_status, "
-            "COALESCE(ac.platform_type, 'openclaw') as platform_type, "
-            "ac.config_json "
-            "FROM agents a "
-            "LEFT JOIN agents_config ac ON a.id = ac.agent_id "
-            "WHERE a.id = :id"
-        ), {"id": agent_id}).fetchone()
-        if not row:
+    from models import Agent
+    from models.agent import AgentConfig
+    session = get_db_session()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        dynamic_load, dynamic_tasks = calc_dynamic_load(conn, agent_id)
+        dynamic_load, dynamic_tasks = calc_dynamic_load(session, agent_id)
 
-        # 解析 platform_config
+        # Get platform config
         platform_config = {}
-        if row.config_json:
+        config = session.query(AgentConfig).filter(AgentConfig.agent_id == agent_id).first()
+        platform_type = config.platform_type if config else "openclaw"
+        if config and config.config_json:
             try:
-                platform_config = json.loads(row.config_json)
+                platform_config = json.loads(config.config_json)
             except Exception:
                 platform_config = {}
 
         return {
-            "id": row.id,
-            "name": row.name,
-            "capability_tags": json.loads(row.capability_tags) if row.capability_tags else {},
-            "status": row.status,
-            "address": row.address,
-            "metadata": json.loads(row.metadata) if row.metadata else {},
+            "id": agent.id,
+            "name": agent.name,
+            "capability_tags": json.loads(agent.capability_tags) if agent.capability_tags else {},
+            "status": agent.status,
+            "address": agent.address,
+            "metadata": json.loads(agent.meta_data) if agent.meta_data else {},
             "load": dynamic_load,
             "current_tasks": dynamic_tasks,
-            "trigger_mode": row.trigger_mode or "sse",
-            "poll_interval_seconds": row.poll_interval_seconds or 10,
-            "model_name": row.model_name or "",
-            "max_concurrent_tasks": row.max_concurrent_tasks or 0,
-            "load_threshold": row.load_threshold or 80,
-            "health_status": row.health_status or "",
-            "registered_at": _to_iso(row.registered_at),
-            "last_heartbeat": _to_iso(row.last_heartbeat),
-            "platform_type": row.platform_type,
+            "trigger_mode": agent.trigger_mode or "sse",
+            "poll_interval_seconds": agent.poll_interval_seconds or 10,
+            "model_name": agent.model_name or "",
+            "max_concurrent_tasks": agent.max_concurrent_tasks or 0,
+            "load_threshold": agent.load_threshold or 80,
+            "health_status": agent.health_status or "",
+            "registered_at": _to_iso(agent.registered_at),
+            "last_heartbeat": _to_iso(agent.last_heartbeat),
+            "platform_type": platform_type,
             "platform_config": _mask_sensitive_fields(platform_config),
+            "agent_code": agent.agent_code or None,  # OpenClaw agent code
         }
+    finally:
+        session.close()
 
 
 @router.get("/agents/{agent_id}/tag-recommendations")
 def get_tag_recommendations(agent_id: str):
     """推荐未拥有的同维度标签"""
-    from api.app_state import get_db_manager
-    from sqlalchemy import text
-    import json as _json
+    from reins.common.database import get_db_session
+    from models import Agent
 
-    db = get_db_manager()
-    with db.engine.connect() as conn:
-        row = conn.execute(text(
-            "SELECT capability_tags FROM agents WHERE id = :aid"
-        ), {"aid": agent_id}).fetchone()
-        if not row:
+    session = get_db_session()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-
-        existing = _json.loads(row.capability_tags) if row.capability_tags else {}
+        existing = json.loads(agent.capability_tags) if agent.capability_tags else {}
+    finally:
+        session.close()
 
     # 预定义的推荐标签池（按维度）
     tag_pool = {
@@ -396,23 +368,20 @@ def get_tag_recommendations(agent_id: str):
 @router.put("/agents/{agent_id}/capability-tags")
 def update_agent_capability_tags(agent_id: str, body: CapabilityTagsUpdate):
     """更新 Agent 能力标签"""
-    from api.app_state import get_db_manager
-    from sqlalchemy import text
-    import json as _json
+    from reins.common.database import get_db_session
+    from models import Agent
 
-    db = get_db_manager()
-    with db.engine.begin() as conn:
-        # Check agent exists
-        row = conn.execute(text("SELECT id FROM agents WHERE id = :aid"), {"aid": agent_id}).fetchone()
-        if not row:
+    session = get_db_session()
+    try:
+        agent = session.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-
-        conn.execute(text(
-            "UPDATE agents SET capability_tags = :tags WHERE id = :aid"
-        ), {
-            "aid": agent_id,
-            "tags": _json.dumps(body.capability_tags, ensure_ascii=False),
+        session.query(Agent).filter(Agent.id == agent_id).update({
+            "capability_tags": json.dumps(body.capability_tags, ensure_ascii=False),
         })
+        session.commit()
+    finally:
+        session.close()
 
     return {
         "agent_id": agent_id,
@@ -423,9 +392,13 @@ def update_agent_capability_tags(agent_id: str, body: CapabilityTagsUpdate):
 @router.delete("/agents/{agent_id}")
 def unregister_agent_route(agent_id: str, reason: str = None):
     """真正从 DB 删除 Agent"""
-    from api.app_state import get_db_manager
-    from sqlalchemy import text
-    db = get_db_manager()
-    with db.engine.begin() as conn:
-        result = conn.execute(text("DELETE FROM agents WHERE id = :aid"), {"aid": agent_id})
-        return {"success": result.rowcount > 0}
+    from reins.common.database import get_db_session
+    from models import Agent
+    session = get_db_session()
+    try:
+        result = session.query(Agent).filter(Agent.id == agent_id).delete()
+        session.commit()
+        return {"success": result > 0}
+    finally:
+        session.close()
+

@@ -15,7 +15,7 @@ from grasp.common.models import (
     CognitionType, CognitionStatus, SourceInfo
 )
 from grasp.facade.service import GraspFacade
-from shared.common.exceptions import NexusException
+from shared.common.exceptions import GreverException
 
 
 class TestGraspInject(unittest.TestCase):
@@ -93,7 +93,7 @@ class TestGraspInject(unittest.TestCase):
             content="",
             source=source,
         )
-        with self.assertRaises(NexusException) as ctx:
+        with self.assertRaises(GreverException) as ctx:
             self.service.inject(cognition_input)
         self.assertIn(ctx.exception.args[0].upper() if ctx.exception.args else "", ["GRASP_INVALID_CONTENT", "INVALID_CONTENT", ""])
 
@@ -105,7 +105,7 @@ class TestGraspInject(unittest.TestCase):
             content="<script>alert('xss')</script>",
             source=source,
         )
-        with self.assertRaises(NexusException) as ctx:
+        with self.assertRaises(GreverException) as ctx:
             self.service.inject(cognition_input)
 
     def test_inject_code_injection_raises(self):
@@ -116,7 +116,7 @@ class TestGraspInject(unittest.TestCase):
             content="execute(system('ls'))",
             source=source,
         )
-        with self.assertRaises(NexusException) as ctx:
+        with self.assertRaises(GreverException) as ctx:
             self.service.inject(cognition_input)
 
     def test_inject_low_confidence_pending_review(self):
@@ -298,13 +298,13 @@ class TestGraspUpdate(unittest.TestCase):
     def test_update_nonexistent_raises(self):
         """更新不存在的认知应抛出异常"""
         update = CognitionUpdate(content="新内容")
-        with self.assertRaises(NexusException) as ctx:
+        with self.assertRaises(GreverException) as ctx:
             self.service.update("non-existent-id", update)
 
     def test_update_poison_content_raises(self):
         """更新危险内容应被拒绝"""
         update = CognitionUpdate(content="<script>alert(1)</script>")
-        with self.assertRaises(NexusException) as ctx:
+        with self.assertRaises(GreverException) as ctx:
             self.service.update(self.cog_id, update)
 
 

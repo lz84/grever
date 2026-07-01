@@ -3,7 +3,7 @@
 单元测试: reins/industry/pack_exporter.py
 
 覆盖:
-1. PackExporter.export_pack() - nexus-pack (zip) 格式
+1. PackExporter.export_pack() - grever-pack (zip) 格式
 2. PackExporter.export_pack() - json 格式
 3. 导出文件包含 manifest.json + checksum.json + 内容
 4. PackNotFoundError 处理
@@ -133,32 +133,32 @@ class TestUnsupportedFormatError:
         with pytest.raises(UnsupportedFormatError) as exc_info:
             exporter.export_pack("pack-chemical-emergency-v1", format="xml")
         assert "xml" in str(exc_info.value)
-        assert "nexus-pack" in str(exc_info.value)
+        assert "grever-pack" in str(exc_info.value)
 
     def test_supported_formats_constant(self):
         """验证 SUPPORTED_FORMATS 包含预期值"""
-        assert "nexus-pack" in SUPPORTED_FORMATS
+        assert "grever-pack" in SUPPORTED_FORMATS
         assert "json" in SUPPORTED_FORMATS
 
 
 # ============================================================================
-# Test: ZIP Export (.nexus-pack)
+# Test: ZIP Export (.grever-pack)
 # ============================================================================
 
 class TestZipExport:
-    """测试 .nexus-pack (zip) 格式导出"""
+    """测试 .grever-pack (zip) 格式导出"""
 
     def test_export_returns_bytes(self, mock_db_session):
         """导出应该返回 bytes"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         assert isinstance(data, bytes)
         assert len(data) > 0
 
     def test_export_is_valid_zip(self, mock_db_session):
         """导出的数据应该是有效的 zip 文件"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         # Should not raise
         zf = zipfile.ZipFile(BytesIO(data))
         zf.close()
@@ -166,7 +166,7 @@ class TestZipExport:
     def test_zip_contains_manifest(self, mock_db_session):
         """zip 应该包含 manifest.json"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
         names = zf.namelist()
         assert "manifest.json" in names
@@ -175,7 +175,7 @@ class TestZipExport:
     def test_zip_contains_checksum(self, mock_db_session):
         """zip 应该包含 checksum.json"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
         names = zf.namelist()
         assert "checksum.json" in names
@@ -184,7 +184,7 @@ class TestZipExport:
     def test_zip_contains_contents(self, mock_db_session):
         """zip 应该包含 contents.json"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
         names = zf.namelist()
         assert "contents.json" in names
@@ -193,7 +193,7 @@ class TestZipExport:
     def test_zip_contains_pack_meta(self, mock_db_session):
         """zip 应该包含 pack_meta.json"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
         names = zf.namelist()
         assert "pack_meta.json" in names
@@ -202,7 +202,7 @@ class TestZipExport:
     def test_manifest_structure(self, mock_db_session):
         """manifest.json 应该有正确的结构"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
 
         manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
@@ -225,7 +225,7 @@ class TestZipExport:
     def test_checksum_structure(self, mock_db_session):
         """checksum.json 应该有正确的结构"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
 
         checksum = json.loads(zf.read("checksum.json").decode("utf-8"))
@@ -246,7 +246,7 @@ class TestZipExport:
     def test_contents_data(self, mock_db_session):
         """contents.json 应该有正确的内容"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
 
         contents = json.loads(zf.read("contents.json").decode("utf-8"))
@@ -259,7 +259,7 @@ class TestZipExport:
     def test_all_files_have_checksums(self, mock_db_session):
         """checksum.json 应该包含内容文件的 hash (不包含 manifest.json 和 checksum.json)"""
         exporter = PackExporter(mock_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
 
         checksum = json.loads(zf.read("checksum.json").decode("utf-8"))
@@ -359,7 +359,7 @@ class TestWithRealDB:
     def test_real_db_export_zip(self, real_db_session):
         """使用真实数据库导出 zip 应该成功"""
         exporter = PackExporter(real_db_session)
-        data = exporter.export_pack("pack-chemical-emergency-v1", format="nexus-pack")
+        data = exporter.export_pack("pack-chemical-emergency-v1", format="grever-pack")
         zf = zipfile.ZipFile(BytesIO(data))
         names = zf.namelist()
         assert "manifest.json" in names

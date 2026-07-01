@@ -12,16 +12,20 @@ import { industryPacksExtendedApi, PackVersion } from '@/shared/utils/api'
 
 const OPERATION_LABELS: Record<string, { label: string; color: string }> = {
   create: { label: '创建', color: 'bg-blue-100 text-blue-700' },
+  created: { label: '创建', color: 'bg-blue-100 text-blue-700' },
   update: { label: '更新', color: 'bg-green-100 text-green-700' },
+  updated: { label: '更新', color: 'bg-green-100 text-green-700' },
   publish: { label: '发布', color: 'bg-purple-100 text-purple-700' },
+  published: { label: '发布', color: 'bg-purple-100 text-purple-700' },
   rollback: { label: '回滚', color: 'bg-orange-100 text-orange-700' },
+  upgrade: { label: '升级', color: 'bg-green-100 text-green-700' },
   deprecate: { label: '废弃', color: 'bg-red-100 text-red-700' },
   import: { label: '导入', color: 'bg-cyan-100 text-cyan-700' },
 }
 
 function formatTimestamp(ts: number): string {
   if (!ts) return '-'
-  return new Date(ts).toLocaleString('zh-CN', {
+  return new Date(ts * 1000).toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -90,8 +94,9 @@ export default function IndustryPackVersionsTab({ packId }: IndustryPackVersions
           </thead>
           <tbody>
             {versions.map((v) => {
-              const opInfo = OPERATION_LABELS[v.operation] || {
-                label: v.operation || '-',
+              const op = v.action || v.operation || ''
+              const opInfo = OPERATION_LABELS[op] || {
+                label: op || '-',
                 color: 'bg-gray-100 text-gray-600',
               }
               return (

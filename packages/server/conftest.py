@@ -13,23 +13,23 @@ src_dir = os.path.join(os.path.dirname(__file__), 'src')
 if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
-# Temporarily mock the nexus module before any imports
-class MockNexusException(Exception):
+# Temporarily mock the grever module before any imports
+class MockGreverException(Exception):
     pass
 
 class MockErrorCode:
     pass
 
-class MockNexusCommonExceptions:
-    NexusException = MockNexusException
+class MockGreverCommonExceptions:
+    GreverException = MockGreverException
     ErrorCode = MockErrorCode
 
-class MockNexusCommon:
-    exceptions = MockNexusCommonExceptions
+class MockGreverCommon:
+    exceptions = MockGreverCommonExceptions
 
-class MockNexus:
-    common = MockNexusCommon
+class MockGrever:
+    common = MockGreverCommon
 
-sys.modules['nexus'] = MockNexus()
-sys.modules['nexus.common'] = MockNexusCommon()
-sys.modules['nexus.common.exceptions'] = MockNexusCommonExceptions()
+sys.modules['grever'] = MockGrever()
+sys.modules['grever.common'] = MockGreverCommon()
+sys.modules['grever.common.exceptions'] = MockGreverCommonExceptions()

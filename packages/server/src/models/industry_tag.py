@@ -10,6 +10,9 @@ from sqlalchemy import Column, String, Text, Integer, Index, PrimaryKeyConstrain
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+from .skill import Skill  # noqa: F401
+from .knowledge import KnowledgeEntry  # noqa: F401
+from .agent_scheme import AgentScheme  # noqa: F401
 
 class IndustryCapabilityTag(Base):
     """行业能力标签"""
@@ -98,7 +101,9 @@ class IndustryPack(Base):
     dependencies: Mapped[Optional[str]] = mapped_column(Text, default='[]')
 
     # Relationship
-    contents = relationship('IndustryPackContent', back_populates='pack', cascade='all, delete-orphan')
+    skills = relationship('Skill', back_populates='pack', cascade='all, delete-orphan')
+    knowledge_entries = relationship('KnowledgeEntry', back_populates='pack', cascade='all, delete-orphan')
+    agent_schemes = relationship('AgentScheme', back_populates='pack', cascade='all, delete-orphan')
 
     def to_dict(self) -> dict:
         return {
@@ -125,27 +130,6 @@ class IndustryPack(Base):
             'import_source': self.import_source,
             'import_source_file': self.import_source_file,
             'dependencies': self._parse_json_field(self.dependencies),
-        }
-
-class IndustryPackContent(Base):
-    """行业包内容关联"""
-    __tablename__ = 'industry_pack_contents'
-    __table_args__ = (
-        PrimaryKeyConstraint('pack_id', 'content_type', 'content_id'),
-    )
-
-    pack_id = Column(String(36), ForeignKey('industry_packs.id'), primary_key=True)
-    content_type = Column(String(50), primary_key=True)  # tag/scenario/skill/knowledge/agent
-    content_id = Column(String(100), primary_key=True)
-
-    # Relationship
-    pack = relationship('IndustryPack', back_populates='contents')
-
-    def to_dict(self) -> dict:
-        return {
-            'pack_id': self.pack_id,
-            'content_type': self.content_type,
-            'content_id': self.content_id,
         }
 
 
@@ -192,149 +176,4 @@ class IndustryPackVersion(Base):
             return value
 
 
-class PromptTemplate(Base):
-    """提示词模板"""
-    __tablename__ = 'prompt_templates'
-
-    id = Column(String(36), primary_key=True)
-    name = Column(String(200), nullable=False)
-    scope = Column(String(20), nullable=False, index=True)  # task / project / goal
-    template = Column(Text, nullable=False)
-    variables = Column(Text, nullable=True)  # JSON array
-    tags = Column(Text, nullable=True)  # JSON array
-    pack_id = Column(String(36), ForeignKey('industry_packs.id'), nullable=True, index=True)
-    created_at = Column(Integer, nullable=False, default=lambda: int(__import__('time').time()))
-    updated_at = Column(Integer, nullable=True)
-
-    def to_dict(self) -> dict:
-        return {
-            'id': self.id,
-            'name': self.name,
-            'scope': self.scope,
-            'template': self.template,
-            'variables': self._parse_json_field(self.variables),
-            'tags': self._parse_json_field(self.tags),
-            'pack_id': self.pack_id,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-        }
-
-    @staticmethod
-    def _parse_json_field(value):
-        if not value:
-            return []
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return []
-
-
-class SOP(Base):
-    """标准操作程序 (Standard Operating Procedure)"""
-    __tablename__ = 'sops'
-
-    id = Column(String(36), primary_key=True)
-    name = Column(String(200), nullable=False)
-    industry = Column(String(100), nullable=True, index=True)
-    content = Column(Text, nullable=False)
-    version = Column(String(20), nullable=True)
-    tags = Column(Text, nullable=True)  # JSON array
-    related_tasks = Column(Text, nullable=True)  # JSON array
-    pack_id = Column(String(36), ForeignKey('industry_packs.id'), nullable=True, index=True)
-    created_at = Column(Integer, nullable=False, default=lambda: int(__import__('time').time()))
-    updated_at = Column(Integer, nullable=True)
-
-    def to_dict(self) -> dict:
-        return {
-            'id': self.id,
-            'name': self.name,
-            'industry': self.industry,
-            'content': self.content,
-            'version': self.version,
-            'tags': self._parse_json_field(self.tags),
-            'related_tasks': self._parse_json_field(self.related_tasks),
-            'pack_id': self.pack_id,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-        }
-
-    @staticmethod
-    def _parse_json_field(value):
-        if not value:
-            return []
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return []
-
-
-class Checklist(Base):
-    """检查清单"""
-    __tablename__ = 'checklists'
-
-    id = Column(String(36), primary_key=True)
-    name = Column(String(200), nullable=False)
-    scope = Column(String(20), nullable=False, index=True)  # pre_task / post_task / pre_project
-    items = Column(Text, nullable=False)  # JSON array
-    tags = Column(Text, nullable=True)  # JSON array
-    related_tasks = Column(Text, nullable=True)  # JSON array
-    pack_id = Column(String(36), ForeignKey('industry_packs.id'), nullable=True, index=True)
-    created_at = Column(Integer, nullable=False, default=lambda: int(__import__('time').time()))
-    updated_at = Column(Integer, nullable=True)
-
-    def to_dict(self) -> dict:
-        return {
-            'id': self.id,
-            'name': self.name,
-            'scope': self.scope,
-            'items': self._parse_json_field(self.items),
-            'tags': self._parse_json_field(self.tags),
-            'related_tasks': self._parse_json_field(self.related_tasks),
-            'pack_id': self.pack_id,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-        }
-
-    @staticmethod
-    def _parse_json_field(value):
-        if not value:
-            return []
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return []
-
-
-class ReferenceData(Base):
-    """参考数据"""
-    __tablename__ = 'reference_data'
-
-    id = Column(String(36), primary_key=True)
-    name = Column(String(200), nullable=False)
-    type = Column(String(20), nullable=False, index=True)  # table / lookup / constants
-    data = Column(Text, nullable=False)  # JSON
-    tags = Column(Text, nullable=True)  # JSON array
-    pack_id = Column(String(36), ForeignKey('industry_packs.id'), nullable=True, index=True)
-    created_at = Column(Integer, nullable=False, default=lambda: int(__import__('time').time()))
-    updated_at = Column(Integer, nullable=True)
-
-    def to_dict(self) -> dict:
-        return {
-            'id': self.id,
-            'name': self.name,
-            'type': self.type,
-            'data': self._parse_json_field(self.data),
-            'tags': self._parse_json_field(self.tags),
-            'pack_id': self.pack_id,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at,
-        }
-
-    @staticmethod
-    def _parse_json_field(value):
-        if not value:
-            return None
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            return value
+# Removed: PromptTemplate, SOP, ReferenceData classes (orphaned, no entity lifecycle mapping)

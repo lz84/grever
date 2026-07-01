@@ -1,5 +1,5 @@
 """
-Nexus 核心调度引擎
+Grever 核心调度引擎
 
 Phase 1: 启动/停止 + 空 tick 循环（仅刷新统计）
 Phase 2: 实现完整的调度逻辑
@@ -14,8 +14,11 @@ from loguru import logger
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from pathlib import Path
-from sqlalchemy import text
 
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from models import Task, Goal, Project
+from models.human_input import HumanInputRequest
 from reins.scheduler.stats import SchedulerStats
 from reins.scheduler.health_manager import AgentHealthManager
 from reins.scheduler.task_recoverer import TaskRecoverer
@@ -23,11 +26,30 @@ from reins.scheduler.task_assigner import TaskAssigner
 from reins.scheduler.dependency_resolver import DependencyResolver
 from reins.scheduler.result_verifier import ResultVerifier
 from reins.scheduler.project_executor import ProjectExecutor
+from reins.scheduler.statemachine import TaskStateMachine, ProjectStateMachine, GoalStateMachine
 from reins.common.config import TICK_INTERVAL, STALE_THRESHOLD, OFFLINE_THRESHOLD, TASK_TIMEOUT_MINUTES
+import subprocess
+import sys
+from loguru import logger
+from datetime import datetime, timedelta
+from typing import Dict, Optional
+from pathlib import Path
 
-class NexusScheduler:
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from models import Task, Goal, Project
+from models.human_input import HumanInputRequest
+from reins.scheduler.stats import SchedulerStats
+from reins.scheduler.health_manager import AgentHealthManager
+from reins.scheduler.task_recoverer import TaskRecoverer
+from reins.scheduler.task_assigner import TaskAssigner
+from reins.scheduler.dependency_resolver import DependencyResolver
+from reins.scheduler.result_verifier import ResultVerifier
+from reins.scheduler.project_executor import ProjectExecutor
+
+class GreverScheduler:
     """
-    Nexus 核心调度引擎
+    Grever 核心调度引擎
 
     职责（Phase 3 实现）：
     - 统一管理 Agent 健康度
@@ -55,6 +77,9 @@ class NexusScheduler:
         self.task_assigner = TaskAssigner(db_manager)
         self.dependency_resolver = DependencyResolver(db_manager)
         self.result_verifier = ResultVerifier(db_manager)
+        
+        # Sprint 120: 空转 backoff 计数器
+        self._consecutive_idle_ticks = 0
         
         # Sprint 74: ProjectExecutor 池
         # Dict[str, ProjectExecutor] — 项目执行器池
@@ -87,21 +112,24 @@ class NexusScheduler:
         
         如果业务需要重跑，应该由人工决策，不应该自动重置。
         """
-        from sqlalchemy import text
         try:
-            with self.db.engine.connect() as conn:
-                result = conn.execute(text("""
-                    UPDATE tasks
-                    SET status = 'paused',
-                        paused_reason = 'orphan_on_restart',
-                        completed_at = :now,
-                        updated_at = :now
-                    WHERE status = 'in_progress'
-                """), {"now": __import__('datetime').datetime.now()})
-                conn.commit()
-                if result.rowcount > 0:
-                    logger.info(f"[Scheduler] Cleaned up {result.rowcount} stale in_progress tasks -> marked paused (orphan_on_restart)")
-                    logger.info(f"[Scheduler] Cleaned up {result.rowcount} stale in_progress tasks -> marked paused (orphan_on_restart)")
+            session = self.db.get_session()
+            try:
+                stale_tasks = session.query(Task).filter(Task.status == 'in_progress').all()
+                for task in stale_tasks:
+                    try:
+                        TaskStateMachine(db, task.id).transition(
+                            'paused',
+                            reason='orphan_on_restart: scheduler restart cleanup',
+                            extra={'paused_reason': 'orphan_on_restart'},
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Scheduler] orphan cleanup failed for {task.id}: {e}")
+                session.commit()
+                if stale_tasks:
+                    logger.info(f"[Scheduler] Cleaned up {len(stale_tasks)} stale in_progress tasks -> paused (orphan_on_restart)")
+            finally:
+                session.close()
         except Exception as e:
             logger.error(f"[Scheduler] Failed to cleanup stale tasks: {e}")
 
@@ -124,7 +152,9 @@ class NexusScheduler:
                 await self._tick()
             except Exception as e:
                 logger.error(f"[Scheduler] Tick error: {e}")
-            await asyncio.sleep(self.TICK_INTERVAL)
+            base = self.TICK_INTERVAL
+            backoff = min(base * (2 ** self._consecutive_idle_ticks), 300)  # max 5min
+            await asyncio.sleep(backoff)
 
     async def _tick(self):
         """
@@ -157,8 +187,6 @@ class NexusScheduler:
         try:
             timeout_result = self.task_recoverer.recover_from_timeout()
             step_results["recover"] = {"recovered_count": timeout_result}
-            import sys
-            logger.info(f"[Scheduler Tick] Step2 timeout_recover: {timeout_result}", flush=True)
             if timeout_result > 0:
                 logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: recovered {timeout_result} timeout tasks")
         except Exception as e:
@@ -172,11 +200,8 @@ class NexusScheduler:
                 recovered = self.task_recoverer.recover_from_offline(agent_id)
                 step_results["recover"] = step_results.get("recover", {})
                 step_results["recover"]["recovered_count"] = step_results["recover"].get("recovered_count", 0) + recovered
-                import sys
-                logger.info(f"[Scheduler Tick] Step3 offline_recover agent={agent_id} recovered={recovered}", flush=True)
                 if recovered > 0:
-                    import sys
-                    logger.info(f"[Scheduler Tick] Step3 recovered {recovered} tasks from {agent_id}", flush=True)
+                    logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: recovered {recovered} tasks from {agent_id}")
         except Exception as e:
             logger.error(f"[Scheduler] Tick {self.stats.total_ticks + 1}: offline recover error: {e}")
 
@@ -185,14 +210,22 @@ class NexusScheduler:
             redistribute_result = self.task_assigner.redistribute_recovered()
             step_results["assign"] = step_results.get("assign", {})
             step_results["assign"]["redistributed_count"] = redistribute_result.get("redistributed_count", 0)
-            import sys
-            logger.info(f"[Scheduler Tick] Step4 redistribute: {redistribute_result.get('redistributed_count', 0)}", flush=True)
             if redistribute_result.get("redistributed_count", 0) > 0:
                 logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: redistributed {redistribute_result.get('redistributed_count')} tasks")
         except Exception as e:
             logger.error(f"[Scheduler] Tick {self.stats.total_ticks + 1}: redistribute error: {e}")
             step_results["assign"] = step_results.get("assign", {})
             step_results["assign"]["redistributed_count"] = 0
+
+        # Step 4.2: 恢复 paused 任务
+        try:
+            paused_result = self.task_recoverer.recover_paused_tasks()
+            step_results["recover_paused"] = {"recovered_count": paused_result}
+            if paused_result > 0:
+                logger.info(f"[Scheduler] Recovered {paused_result} paused tasks")
+        except Exception as e:
+            logger.error(f"[Scheduler] recover_paused_tasks error: {e}")
+            step_results["recover_paused"] = {"recovered_count": 0}
 
         # Step 4.1: 分配新任务（assign_pending_tasks）
         # 从场景实例化后的任务 assigned_agent=NULL，需要被分配给智能体
@@ -201,8 +234,7 @@ class NexusScheduler:
             pending_count = pending_result.get("assigned_count", 0)
             step_results["assign_new"] = {"assigned_count": pending_count}
             if pending_count > 0:
-                import sys
-                logger.info(f"[Scheduler Tick] Step4.1 assign_pending: assigned {pending_count} tasks", flush=True)
+                logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: assign_pending_tasks - assigned {pending_count} tasks")
         except Exception as e:
             logger.error(f"[Scheduler] Tick {self.stats.total_ticks + 1}: assign_pending_tasks error: {e}")
             step_results["assign_new"] = {"assigned_count": 0}
@@ -240,8 +272,7 @@ class NexusScheduler:
 
         # Step 7: 验证器 tick - 扫描 review_needed 任务并验证
         try:
-            verifier = ResultVerifier(self.db)
-            verify_result = verifier.tick()
+            verify_result = self.result_verifier.tick()
             step_results["verifier"] = verify_result
             if verify_result.get("processed_count", 0) > 0:
                 logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: verifier - processed {verify_result['processed_count']} tasks")
@@ -266,6 +297,23 @@ class NexusScheduler:
         except Exception as e:
             logger.error(f"[Scheduler] Tick {self.stats.total_ticks + 1}: stats update error: {e}")
 
+        # Sprint 120: 计算空转 tick 计数（只算真正处理的任务量，不含健康扫描）
+        total_processed = (
+            step_results.get("recover", {}).get("recovered_count", 0)
+            + step_results.get("assign", {}).get("redistributed_count", 0)
+            + step_results.get("assign_new", {}).get("assigned_count", 0)
+            + step_results.get("project_executors", {}).get("total_completed", 0)
+            + step_results.get("project_executors", {}).get("total_launched", 0)
+            + step_results.get("verifier", {}).get("processed_count", 0)
+            + step_results.get("recover_paused", {}).get("recovered_count", 0)
+            + step_results.get("unlock", {}).get("unlocked_count", 0)
+            + step_results.get("hitl", {}).get("timeout_handled", 0)
+        )
+        if total_processed == 0:
+            self._consecutive_idle_ticks += 1
+        else:
+            self._consecutive_idle_ticks = 0
+
         # Step 10: 每日蒸馏（Sprint 105-2）- 凌晨 02:00 触发
         try:
             await self._tick_daily_distill()
@@ -279,7 +327,7 @@ class NexusScheduler:
         逻辑：
         1. 查询所有活跃项目（active/in_progress）
         2. 为每个项目创建/获取 ProjectExecutor
-        3. 为 project_id IS NULL 的任务创建 "Nexus 内部" 项目
+        3. 为 project_id IS NULL 的任务创建 "Grever 内部" 项目
         4. 调用每个 executor 的 tick()
         5. 清理已完成的项目 executor
         
@@ -290,49 +338,39 @@ class NexusScheduler:
         total_launched = 0
         
         try:
-            # 查询所有活跃项目
-            with self.db.engine.connect() as conn:
-                # 活跃项目：active 或 in_progress
-                active_projects = conn.execute(text("""
-                    SELECT id, name, status FROM projects
-                    WHERE status IN ('active', 'in_progress')
-                """)).fetchall()
+            session = self.db.get_session()
+            try:
+                # 查询所有活跃项目
+                active_projects = session.query(Project).filter(
+                    Project.status.in_(['active', 'in_progress'])
+                ).all()
                 
                 # 额外检查：是否有 project_id IS NULL 的任务
-                null_projects = conn.execute(text("""
-                    SELECT COUNT(*) FROM tasks WHERE project_id IS NULL
-                """)).fetchone()[0]
+                null_projects = session.query(func.count(Task.id)).filter(Task.project_id.is_(None)).scalar() or 0
                 
                 project_ids = [p.id for p in active_projects]
                 
-                # 如果有 NULL project_id 的任务，确保 "Nexus 内部" 项目存在
+                # 如果有 NULL project_id 的任务，确保 "Grever 内部" 项目存在
                 if null_projects > 0:
-                    internal_project_id = "proj-nexus-internal"
-                    existing = conn.execute(text("""
-                        SELECT id FROM projects WHERE id = :id
-                    """), {"id": internal_project_id}).fetchone()
+                    internal_project_id = "proj-grever-internal"
+                    existing = session.query(Project.id).filter(Project.id == internal_project_id).first()
                     
                     if not existing:
-                        # 创建 "Nexus 内部" 项目（仅在 migration 未执行时）
-                        conn.execute(text("""
-                            INSERT INTO projects (id, name, description, status, created_at)
-                            VALUES (:id, :name, :description, :status, :now)
-                        """), {
-                            "id": internal_project_id,
-                            "name": "Nexus 内部",
-                            "description": "Nexus 系统内部任务项目",
-                            "status": "active",
-                            "now": conn.execute(text("SELECT datetime('now')")).fetchone()[0],
-                        })
-                        conn.commit()
+                        # 创建 "Grever 内部" 项目（仅在 migration 未执行时）
+                        new_project = Project(
+                            id=internal_project_id,
+                            name="Grever 内部",
+                            description="Grever 系统内部任务项目",
+                            status="active",
+                        )
+                        session.add(new_project)
+                        session.commit()
                         project_ids.append(internal_project_id)
                         logger.info(f"[Scheduler] Created internal project {internal_project_id} for NULL project tasks")
                     else:
                         project_ids.append(internal_project_id)
                 
-                import sys
-                logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: found {len(project_ids)} active projects: {project_ids}", flush=True)
-                sys.stdout.flush()
+                logger.info(f"[Scheduler] Tick {self.stats.total_ticks + 1}: found {len(project_ids)} active projects: {project_ids}")
                 
                 # 为每个项目 tick
                 for project_id in project_ids:
@@ -359,7 +397,6 @@ class NexusScheduler:
                             del self.project_executors[project_id]
                             
                     except Exception as e:
-                        import sys, traceback
                         tb = traceback.format_exc()
                         logger.info(f"[Scheduler] FAILED to tick project {project_id}: {e}\n{tb}", flush=True)
                         logger.error(f"[Scheduler] Failed to tick project {project_id}: {e}\n{tb}")
@@ -375,6 +412,8 @@ class NexusScheduler:
                 for pid in completed_projects:
                     del self.project_executors[pid]
                     logger.info(f"[Scheduler] Cleaned up completed executor for project {pid}")
+            finally:
+                session.close()
                 
         except Exception as e:
             logger.error(f"[Scheduler] _tick_project_executors error: {e}")
@@ -398,13 +437,11 @@ class NexusScheduler:
         results = {"paused": 0, "timeout_handled": 0, "errors": 0}
 
         try:
-            with self.db.engine.connect() as conn:
-                pending = conn.execute(text("""
-                    SELECT id, task_id, goal_id, project_id, timeout_action,
-                           timeout_minutes, default_value, branches, created_at
-                    FROM human_input_requests
-                    WHERE status = 'pending'
-                """)).fetchall()
+            session = self.db.get_session()
+            try:
+                pending = session.query(HumanInputRequest).filter(
+                    HumanInputRequest.status == 'pending'
+                ).all()
 
                 for req in pending:
                     req_id = req.id
@@ -426,7 +463,7 @@ class NexusScheduler:
                     if is_timed_out:
                         try:
                             self._handle_hitl_timeout(
-                                conn, req_id, task_id, goal_id, project_id,
+                                session, req_id, task_id, goal_id, project_id,
                                 timeout_action, default_value, branches_raw
                             )
                             results["timeout_handled"] += 1
@@ -435,57 +472,61 @@ class NexusScheduler:
                             results["errors"] += 1
                     else:
                         try:
+                            now = datetime.now()
                             if goal_id:
-                                conn.execute(text("""
-                                    UPDATE goals SET status = 'paused',
-                                        paused_reason = 'awaiting_human_input',
-                                        updated_at = :now
-                                    WHERE id = :gid AND status NOT IN ('completed','failed')
-                                """), {"now": datetime.now(), "gid": goal_id})
+                                session.query(Goal).filter(
+                                    Goal.id == goal_id,
+                                    Goal.status.notin_(['completed', 'failed'])
+                                ).update({
+                                    "status": "paused",
+                                    "paused_reason": "awaiting_human_input",
+                                    "updated_at": now
+                                }, synchronize_session=False)
                             if project_id:
-                                conn.execute(text("""
-                                    UPDATE projects SET status = 'paused',
-                                        paused_reason = 'awaiting_human_input',
-                                        updated_at = :now
-                                    WHERE id = :pid AND status NOT IN ('completed','failed')
-                                """), {"now": datetime.now(), "pid": project_id})
+                                session.query(Project).filter(
+                                    Project.id == project_id,
+                                    Project.status.notin_(['completed', 'failed'])
+                                ).update({
+                                    "status": "paused",
+                                    "paused_reason": "awaiting_human_input",
+                                    "updated_at": now
+                                }, synchronize_session=False)
                             if task_id:
-                                conn.execute(text("""
-                                    UPDATE tasks SET status = 'paused',
-                                        paused_reason = 'awaiting_human_input',
-                                        updated_at = :now
-                                    WHERE id = :tid AND status NOT IN ('done','failed')
-                                """), {"now": datetime.now(), "tid": task_id})
+                                task = session.query(Task).filter(Task.id == task_id).first()
+                                if task and task.status not in ['done', 'failed']:
+                                    TaskStateMachine(db, task_id).transition(
+                                        'paused',
+                                        reason='awaiting_human_input',
+                                        extra={'paused_reason': 'awaiting_human_input'},
+                                    )
                             results["paused"] += 1
                         except Exception as e:
                             logger.error(f"[HITL] Pause error for {req_id}: {e}")
                             results["errors"] += 1
 
-                conn.commit()
+                session.commit()
+            finally:
+                session.close()
         except Exception as e:
             logger.error(f"[HITL] Check error: {e}")
             results["errors"] += 1
 
         return results
 
-    def _handle_hitl_timeout(self, conn, req_id, task_id, goal_id, project_id,
+    def _handle_hitl_timeout(self, session, req_id, task_id, goal_id, project_id,
                               timeout_action, default_value, branches_raw):
         """处理 HITL 超时"""
         now = datetime.now()
 
         if timeout_action == 'use_default' and default_value:
             # 使用默认值，相当于人类提交了 default_value
-            conn.execute(text("""
-                UPDATE human_input_requests
-                SET status = 'submitted', input_data = :data,
-                    response = :resp, submitted_at = :now, updated_at = :now
-                WHERE id = :rid
-            """), {
-                "data": json.dumps({"value": default_value}),
-                "resp": default_value,
-                "now": now,
-                "rid": req_id
-            })
+            session.query(HumanInputRequest).filter(HumanInputRequest.id == req_id).update({
+                "status": "submitted",
+                "input_data": json.dumps({"value": default_value}),
+                "response": default_value,
+                "submitted_at": now,
+                "updated_at": now
+            }, synchronize_session=False)
 
             # 如果是 task_id，解锁依赖
             if task_id:
@@ -493,36 +534,41 @@ class NexusScheduler:
                 resolver.unlock_on_human_input(req_id)
 
         elif timeout_action in ('skip_project', 'skip_task'):
-            conn.execute(text("""
-                UPDATE human_input_requests
-                SET status = 'skipped', updated_at = :now
-                WHERE id = :rid
-            """), {"now": now, "rid": req_id})
+            session.query(HumanInputRequest).filter(HumanInputRequest.id == req_id).update({
+                "status": "skipped",
+                "updated_at": now
+            }, synchronize_session=False)
 
         elif timeout_action == 'escalate':
-            conn.execute(text("""
-                UPDATE human_input_requests
-                SET status = 'escalated', updated_at = :now
-                WHERE id = :rid
-            """), {"now": now, "rid": req_id})
+            session.query(HumanInputRequest).filter(HumanInputRequest.id == req_id).update({
+                "status": "escalated",
+                "updated_at": now
+            }, synchronize_session=False)
             logger.warning(f"[HITL] Escalated request {req_id} (no human response)")
+
+            # 标记任务为 failed
+            if task_id:
+                TaskStateMachine(db, task_id).transition(
+                    'failed',
+                    reason='HITL timeout escalate',
+                    extra={'escalated': True, 'hir_id': req_id},
+                )
 
         # 恢复关联实体的状态
         if goal_id:
-            conn.execute(text("""
-                UPDATE goals SET status = 'active', paused_reason = NULL, updated_at = :now
-                WHERE id = :gid
-            """), {"now": now, "gid": goal_id})
+            goal_fsm = GoalStateMachine(session, goal_id)
+            goal_fsm.transition("active", reason="HITL 超时后恢复")
         if project_id:
-            conn.execute(text("""
-                UPDATE projects SET status = 'active', paused_reason = NULL, updated_at = :now
-                WHERE id = :pid
-            """), {"now": now, "pid": project_id})
+            project_fsm = ProjectStateMachine(session, project_id)
+            project_fsm.transition("active", reason="HITL 超时后恢复")
         if task_id:
-            conn.execute(text("""
-                UPDATE tasks SET status = 'todo', paused_reason = NULL, updated_at = :now
-                WHERE id = :tid
-            """), {"now": now, "tid": task_id})
+            task = session.query(Task).filter(Task.id == task_id).first()
+            if task:
+                TaskStateMachine(db, task_id).transition(
+                    'todo',
+                    reason='scheduler unpause',
+                    extra={'paused_reason': None},
+                )
 
     async def _tick_daily_distill(self):
         """
@@ -549,18 +595,17 @@ class NexusScheduler:
 
         # 先检查是否有足够的任务记录
         try:
-            with self.db.engine.connect() as conn:
+            session = self.db.get_session()
+            try:
                 cutoff_ts = int((now - timedelta(days=7)).timestamp())
-                row = conn.execute(text("""
-                    SELECT COUNT(*) as cnt FROM tasks
-                    WHERE status IN ('done', 'failed', 'error', 'timeout')
-                      AND assigned_agent IS NOT NULL AND assigned_agent != ''
-                      AND (
-                          completed_at >= :cutoff
-                          OR (typeof(completed_at) = 'text' AND completed_at >= :cutoff_str)
-                      )
-                """), {"cutoff": cutoff_ts, "cutoff_str": cutoff_ts}).fetchone()
-                record_count = row.cnt if row else 0
+                record_count = session.query(func.count(Task.id)).filter(
+                    Task.status.in_(['done', 'failed', 'error', 'timeout']),
+                    Task.assigned_agent.isnot(None),
+                    Task.assigned_agent != '',
+                    Task.completed_at >= cutoff_ts
+                ).scalar() or 0
+            finally:
+                session.close()
         except Exception as e:
             logger.warning(f"[Scheduler] Distill record count check failed: {e}, proceeding anyway")
             record_count = 5  # 如果检查失败，假设足够

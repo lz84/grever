@@ -75,7 +75,8 @@ def pause_task(task_id: str, db: Session = Depends(get_db)):
         )
 
     old_status = task.status
-    now = datetime.now()
+    now_ts = int(datetime.now().timestamp())
+    now_dt = datetime.now()
 
     db.execute(text("""
         UPDATE tasks
@@ -84,7 +85,7 @@ def pause_task(task_id: str, db: Session = Depends(get_db)):
             started_at = NULL,
             updated_at = :now
         WHERE id = :task_id
-    """), {"task_id": task_id, "now": now})
+    """), {"task_id": task_id, "now": now_ts})
 
     db.execute(
         task_activity_log.insert().values(
@@ -93,7 +94,7 @@ def pause_task(task_id: str, db: Session = Depends(get_db)):
             old_status=old_status,
             new_status="paused",
             reason="人类主动暂停",
-            timestamp=now,
+            timestamp=now_dt,
         )
     )
 
@@ -120,7 +121,8 @@ def resume_task(task_id: str, db: Session = Depends(get_db)):
         )
 
     old_status = task.status
-    now = datetime.now()
+    now_ts = int(datetime.now().timestamp())
+    now_dt = datetime.now()
 
     db.execute(text("""
         UPDATE tasks
@@ -129,7 +131,7 @@ def resume_task(task_id: str, db: Session = Depends(get_db)):
             started_at = NULL,
             updated_at = :now
         WHERE id = :task_id
-    """), {"task_id": task_id, "now": now})
+    """), {"task_id": task_id, "now": now_ts})
 
     db.execute(
         task_activity_log.insert().values(
@@ -138,7 +140,7 @@ def resume_task(task_id: str, db: Session = Depends(get_db)):
             old_status=old_status,
             new_status="todo",
             reason="人类主动恢复",
-            timestamp=now,
+            timestamp=now_dt,
         )
     )
 
@@ -158,7 +160,8 @@ def restart_task(task_id: str, request: RestartTaskRequest = None, db: Session =
     if not task.assigned_agent:
         raise HTTPException(status_code=400, detail="任务没有分配 Agent,请先重新分配再重启")
 
-    now = datetime.now()
+    now_ts = int(datetime.now().timestamp())
+    now_dt = datetime.now()
 
     db.execute(text("""
         UPDATE tasks SET
@@ -172,7 +175,7 @@ def restart_task(task_id: str, request: RestartTaskRequest = None, db: Session =
             verification_cycle = 0,
             updated_at = :now
         WHERE id = :task_id
-    """), {"now": now, "task_id": task_id})
+    """), {"now": now_ts, "task_id": task_id})
 
     db.execute(
         task_activity_log.insert().values(
@@ -181,7 +184,7 @@ def restart_task(task_id: str, request: RestartTaskRequest = None, db: Session =
             old_status=old_status,
             new_status="in_progress",
             reason=request.reason if request else "Task restarted",
-            timestamp=now,
+            timestamp=now_dt,
         )
     )
 
@@ -200,7 +203,7 @@ def restart_task(task_id: str, request: RestartTaskRequest = None, db: Session =
                 }),
                 status='success',
                 duration_ms=0,
-                created_at=now,
+                created_at=now_dt,
                 error_message='',
                 result_summary='任务已重启',
                 metadata=json.dumps({"source": "restart_endpoint"}),
@@ -240,11 +243,11 @@ def restart_task(task_id: str, request: RestartTaskRequest = None, db: Session =
 
 @router.get("/{task_id}/activity", response_model=List[ActivityLogResponse])
 def get_task_activity(task_id: str, db: Session = Depends(get_db)):
-    """P5-03-07: 获取 Task 状态变更历史"""
+    """P5-03-07: 获取 Task 状态变更历史（时间倒序）"""
     result = db.execute(
         task_activity_log.select()
         .where(task_activity_log.c.task_id == str(task_id))
-        .order_by(task_activity_log.c.timestamp.asc())
+        .order_by(task_activity_log.c.timestamp.desc())
     ).fetchall()
 
     return [
@@ -280,7 +283,8 @@ def terminate_task(task_id: str, req: TerminateTaskRequest = None, db: Session =
         )
 
     old_status = task.status
-    now = datetime.now()
+    now_ts = int(datetime.now().timestamp())
+    now_dt = datetime.now()
     reason = req.reason if req else "人工终止"
 
     db.execute(text("""
@@ -292,7 +296,7 @@ def terminate_task(task_id: str, req: TerminateTaskRequest = None, db: Session =
             paused_reason = NULL,
             updated_at = :now
         WHERE id = :task_id
-    """), {"task_id": task_id, "now": now, "reason": reason})
+    """), {"task_id": task_id, "now": now_ts, "reason": reason})
 
     db.execute(
         task_activity_log.insert().values(
@@ -302,7 +306,7 @@ def terminate_task(task_id: str, req: TerminateTaskRequest = None, db: Session =
             new_status="failed",
             reason=reason,
             actor="human",
-            timestamp=now,
+            timestamp=now_dt,
         )
     )
 
@@ -335,7 +339,8 @@ def takeover_task(task_id: str, req: TakeoverTaskRequest = None, db: Session = D
         )
 
     old_status = task.status
-    now = datetime.now()
+    now_ts = int(datetime.now().timestamp())
+    now_dt = datetime.now()
     reason = req.reason if req else "人工接管"
 
     db.execute(text("""
@@ -345,7 +350,7 @@ def takeover_task(task_id: str, req: TakeoverTaskRequest = None, db: Session = D
             started_at = NULL,
             updated_at = :now
         WHERE id = :task_id
-    """), {"task_id": task_id, "now": now, "reason": reason})
+    """), {"task_id": task_id, "now": now_ts, "reason": reason})
 
     db.execute(
         task_activity_log.insert().values(
@@ -355,7 +360,7 @@ def takeover_task(task_id: str, req: TakeoverTaskRequest = None, db: Session = D
             new_status="paused",
             reason=reason,
             actor="human",
-            timestamp=now,
+            timestamp=now_dt,
         )
     )
 

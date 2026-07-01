@@ -7,35 +7,42 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from reins.common.database import get_db
+from models import Goal, Project, Task
 from models.goal import GoalStatus
 
 router = APIRouter(prefix="/api/v1/goals", tags=["goals-exploration"])
 
+
 @router.post("/{goal_id}/activate")
 def activate_goal(goal_id: str, db: Session = Depends(get_db)):
     """激活目标：将状态从 draft 改为 in_progress，并触发调度器派发任务。"""
+    from reins.scheduler.statemachine import GoalStateMachine
     from reins.scheduler import get_scheduler
     import asyncio
 
-    row = db.execute(
-        text("SELECT id, mode, status FROM goals WHERE id = :id"),
-        {"id": goal_id}
-    ).mappings().fetchone()
-    if not row:
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
-    if row.get("status") in ("in_progress", "active"):
-        raise HTTPException(status_code=400, detail="Goal already active")
-    if row.get("mode") == "exploration":
-        raise HTTPException(status_code=400, detail="Exploration mode goals should use /start-iteration")
+    
+    # 通过状态机检查并转换状态
+    fsm = GoalStateMachine(db, goal_id)
+    if not fsm.can_transition(GoalStatus.IN_PROGRESS):
+        allowed = fsm.transition("planned", reason="激活前先transition to planned")
+        if not allowed:
+            raise HTTPException(status_code=400, detail=f"Cannot activate goal: {goal.status} → planned not allowed")
+    
+    # 再转到 in_progress
+    if not fsm.can_transition(GoalStatus.IN_PROGRESS):
+        raise HTTPException(status_code=400, detail=f"Cannot activate goal with status {goal.status}")
+    
+    fsm.transition(GoalStatus.IN_PROGRESS, reason="激活目标", extra={"updated_at": int(datetime.utcnow().timestamp())})
+    
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()  # refresh
 
-    db.execute(
-        text("UPDATE goals SET status = 'in_progress', updated_at = :now WHERE id = :id"),
-        {"now": int(datetime.utcnow().timestamp()), "id": goal_id}
-    )
-    db.commit()
+    if goal.mode == "research":
+        raise HTTPException(status_code=400, detail="Research mode goals should use /start-iteration")
 
     try:
         sched = get_scheduler()
@@ -48,84 +55,93 @@ def activate_goal(goal_id: str, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    updated = db.execute(
-        text("SELECT id, title, status, mode, created_at FROM goals WHERE id = :id"),
-        {"id": goal_id}
-    ).mappings().fetchone()
-
+    db.refresh(goal)
     return {
-        "id": updated["id"],
-        "title": updated["title"],
-        "status": updated["status"],
-        "mode": updated["mode"],
+        "id": goal.id,
+        "title": goal.title,
+        "status": goal.status,
+        "mode": goal.mode,
     }
+
 
 @router.post("/{goal_id}/pause")
 def pause_goal(goal_id: str, db: Session = Depends(get_db)):
     """暂停目标：级联暂停所有子 Project 和 Task。"""
-    row = db.execute(text("SELECT id, status FROM goals WHERE id = :id"), {"id": goal_id}).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    if row[1] not in (GoalStatus.IN_PROGRESS, 'active'):
-        raise HTTPException(status_code=400, detail=f"Cannot pause goal with status {row[1]}")
+    from reins.scheduler.statemachine import GoalStateMachine
 
-    now = int(datetime.utcnow().timestamp())
-    db.execute(text("UPDATE goals SET status=:s, updated_at=:now WHERE id=:id"),
-               {"s": GoalStatus.PAUSED, "now": now, "id": goal_id})
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    
+    # 通过状态机检查
+    fsm = GoalStateMachine(db, goal_id)
+    if not fsm.can_transition(GoalStatus.PAUSED):
+        raise HTTPException(status_code=400, detail=f"Cannot pause goal with status {goal.status}")
+
+    # 如果当前状态不是 in_progress/active，先转到 in_progress
+    if not fsm.can_transition(GoalStatus.PAUSED):
+        allowed = fsm.transition("in_progress", reason="pause前需要in_progress")
+        if not allowed:
+            raise HTTPException(status_code=400, detail=f"Cannot pause goal: {goal.status} → in_progress not allowed")
+    
+    fsm.transition(GoalStatus.PAUSED, reason="暂停目标", extra={"updated_at": int(datetime.utcnow().timestamp())})
+    now_ts = int(datetime.utcnow().timestamp())
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()  # refresh
 
     # Pause ALL projects under this goal (any running state)
-    proj_rows = db.execute(text(
-        "SELECT id FROM projects WHERE goal_id=:gid AND status IN ('active','in_progress','running')"
-    ), {"gid": goal_id}).fetchall()
-    paused_projects = 0
+    paused_projects = db.query(Project).filter(
+        Project.goal_id == goal_id,
+        Project.status.in_(['active', 'in_progress', 'running']),
+    ).update({
+        "status": 'paused',
+        "updated_at": now_ts,
+    })
+
+    # Pause ALL tasks under this goal (via projects)
     paused_tasks = 0
-    for prow in proj_rows:
-        pid = prow[0]
-        db.execute(text("UPDATE projects SET status='paused', updated_at=:now WHERE id=:pid"),
-                   {"now": now, "pid": pid})
-        paused_projects += 1
-        # Pause ALL tasks under this project (any running state)
-        task_rows = db.execute(text(
-            "SELECT id FROM tasks WHERE project_id=:pid AND status IN ('in_progress','running','assigned')"
-        ), {"pid": pid}).fetchall()
-        for trow in task_rows:
-            tid = trow[0]
-            db.execute(text(
-                "UPDATE tasks SET status='paused', started_at=NULL, updated_at=:now WHERE id=:tid"
-            ), {"now": now, "tid": tid})
-            paused_tasks += 1
+    project_ids = db.query(Project.id).filter(Project.goal_id == goal_id).all()
+    for (pid,) in project_ids:
+        count = db.query(Task).filter(
+            Task.project_id == pid,
+            Task.status.in_(['in_progress', 'running', 'assigned']),
+        ).update({
+            "status": 'paused',
+            "started_at": None,
+            "updated_at": now_ts,
+        })
+        paused_tasks += count
 
     # Also pause tasks directly under the goal (no project)
-    orphan_tasks = db.execute(text(
-        "SELECT id FROM tasks WHERE goal_id=:gid AND project_id IS NULL AND status IN ('in_progress','running','assigned')"
-    ), {"gid": goal_id}).fetchall()
-    for trow in orphan_tasks:
-        tid = trow[0]
-        db.execute(text(
-            "UPDATE tasks SET status='paused', started_at=NULL, updated_at=:now WHERE id=:tid"
-        ), {"now": now, "tid": tid})
-        paused_tasks += 1
+    orphan_tasks = db.query(Task).filter(
+        Task.goal_id == goal_id,
+        Task.project_id.is_(None),
+        Task.status.in_(['in_progress', 'running', 'assigned']),
+    ).update({
+        "status": 'paused',
+        "started_at": None,
+        "updated_at": now_ts,
+    })
+    paused_tasks += orphan_tasks
 
     db.commit()
     return {"ok": True, "goal_id": goal_id, "status": "paused",
             "projects_paused": paused_projects, "tasks_paused": paused_tasks}
 
+
 @router.post("/{goal_id}/auto-assign")
 def auto_assign_goal_tasks(goal_id: str, db: Session = Depends(get_db)):
     """一键分配：为目标下所有未分配的 task 自动分配 Agent。"""
-    row = db.execute(text("SELECT id, status FROM goals WHERE id = :id"), {"id": goal_id}).fetchone()
-    if not row:
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
     # Get all unassigned tasks under this goal (via projects or directly)
-    task_rows = db.execute(text("""
-        SELECT t.id, t.project_id
-        FROM tasks t
-        LEFT JOIN projects p ON t.project_id = p.id
-        WHERE (p.goal_id = :gid OR t.goal_id = :gid)
-          AND (t.assigned_agent IS NULL OR t.assigned_agent = '')
-          AND t.status IN ('todo', 'pending')
-    """), {"gid": goal_id}).fetchall()
+    # Tasks via projects
+    task_rows = db.query(Task).with_entities(Task.id, Task.project_id).filter(
+        (Project.goal_id == goal_id) | (Task.goal_id == goal_id),
+        (Task.assigned_agent.is_(None) | (Task.assigned_agent == '')),
+        Task.status.in_(['todo', 'pending']),
+    ).all()
 
     if not task_rows:
         return {"ok": True, "goal_id": goal_id, "assigned": 0, "message": "没有未分配的任务"}
@@ -135,15 +151,16 @@ def auto_assign_goal_tasks(goal_id: str, db: Session = Depends(get_db)):
 
     assigned_count = 0
     results = []
-    for trow in task_rows:
-        tid = trow[0]
+    now_ts = int(datetime.utcnow().timestamp())
+    for tid, _ in task_rows:
         try:
             # Try to find best agent via registry
             agent_id = assigner._select_best_agent([])  # No specific capabilities required
             if agent_id:
-                db.execute(text(
-                    "UPDATE tasks SET assigned_agent = :aid, updated_at = :now WHERE id = :tid"
-                ), {"aid": agent_id, "now": int(datetime.utcnow().timestamp()), "tid": tid})
+                db.query(Task).filter(Task.id == tid).update({
+                    "assigned_agent": agent_id,
+                    "updated_at": now_ts,
+                })
                 assigned_count += 1
                 results.append({"task_id": tid, "agent_id": agent_id})
             else:
@@ -154,37 +171,66 @@ def auto_assign_goal_tasks(goal_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "goal_id": goal_id, "assigned": assigned_count, "total": len(task_rows), "results": results}
 
+
 @router.post("/{goal_id}/resume")
 def resume_goal(goal_id: str, db: Session = Depends(get_db)):
     """再激活目标：恢复所有子 Project 为 active，Paused/Failed 的 Task 改回 todo 重新派发。"""
-    row = db.execute(text("SELECT id, status FROM goals WHERE id = :id"), {"id": goal_id}).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    if row[1] != GoalStatus.PAUSED:
-        raise HTTPException(status_code=400, detail=f"Cannot resume goal with status {row[1]}")
+    from reins.scheduler.statemachine import GoalStateMachine
 
-    now = int(datetime.utcnow().timestamp())
-    db.execute(text("UPDATE goals SET status=:s, updated_at=:now WHERE id=:id"),
-               {"s": GoalStatus.IN_PROGRESS, "now": now, "id": goal_id})
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    
+    # 通过状态机检查
+    fsm = GoalStateMachine(db, goal_id)
+    if not fsm.can_transition(GoalStatus.IN_PROGRESS):
+        raise HTTPException(status_code=400, detail=f"Cannot resume goal with status {goal.status}")
+
+    fsm.transition(GoalStatus.IN_PROGRESS, reason="恢复目标", extra={"updated_at": int(datetime.utcnow().timestamp())})
+    now_ts = int(datetime.utcnow().timestamp())
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()  # refresh
 
     # Resume ALL paused projects under this goal
-    resumed_projects = db.execute(text(
-        "UPDATE projects SET status='active', updated_at=:now WHERE goal_id=:gid AND status='paused'"
-    ), {"now": now, "gid": goal_id}).rowcount
+    resumed_projects = db.query(Project).filter(
+        Project.goal_id == goal_id,
+        Project.status == 'paused',
+    ).update({
+        "status": 'active',
+        "updated_at": now_ts,
+    })
 
-    # Resume paused + failed tasks via project_id (most common path)
-    resumed_via_project = db.execute(text(
-        "UPDATE tasks SET status='todo', assigned_agent=NULL, started_at=NULL, updated_at=:now, "
-        "result=NULL, result_summary=NULL, error_message=NULL, error_type=NULL "
-        "WHERE project_id IN (SELECT id FROM projects WHERE goal_id=:gid) AND status IN ('paused','failed')"
-    ), {"now": now, "gid": goal_id}).rowcount
+    # Resume paused + failed tasks via project_id (most common path) (most common path)
+    resumed_via_project = db.query(Task).filter(
+        Task.project_id.in_(
+            db.query(Project.id).filter(Project.goal_id == goal_id)
+        ),
+        Task.status.in_(['paused', 'failed']),
+    ).update({
+        "status": 'todo',
+        "assigned_agent": None,
+        "started_at": None,
+        "updated_at": now_ts,
+        "result": None,
+        "result_summary": None,
+        "error_message": None,
+        "error_type": None,
+    })
 
     # Also resume paused + failed tasks directly under the goal (no project)
-    resumed_direct = db.execute(text(
-        "UPDATE tasks SET status='todo', assigned_agent=NULL, started_at=NULL, updated_at=:now, "
-        "result=NULL, result_summary=NULL, error_message=NULL, error_type=NULL "
-        "WHERE goal_id=:gid AND project_id IS NULL AND status IN ('paused','failed')"
-    ), {"now": now, "gid": goal_id}).rowcount
+    resumed_direct = db.query(Task).filter(
+        Task.goal_id == goal_id,
+        Task.project_id.is_(None),
+        Task.status.in_(['paused', 'failed']),
+    ).update({
+        "status": 'todo',
+        "assigned_agent": None,
+        "started_at": None,
+        "updated_at": now_ts,
+        "result": None,
+        "result_summary": None,
+        "error_message": None,
+        "error_type": None,
+    })
 
     db.commit()
     total_resumed = (resumed_via_project or 0) + (resumed_direct or 0)

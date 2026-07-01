@@ -1,4 +1,5 @@
 """全局 app 状态 — 供 router 共享访问 reins 和 db_manager"""
+from loguru import logger
 from typing import Any, Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,7 @@ def set_reins(r: ReinsServer):
 def set_db_manager(db: DatabaseManager):
     global _db_manager
     _db_manager = db
-    print(f"[DEBUG] DatabaseManager initialized: {db.engine.url}")
+    logger.info(f"DatabaseManager initialized: {db.engine.url}")
 
 def set_probe_detector(detector):
     global _probe_detector

@@ -87,7 +87,7 @@ def pull_workspace_endpoint(goal_id: str, db: Session = Depends(get_db)):
     return result
 
 @router.post("/{goal_id}/workspace/push")
-def push_workspace_endpoint(goal_id: str, commit_msg: str = "Auto-commit from Nexus", db: Session = Depends(get_db)):
+def push_workspace_endpoint(goal_id: str, commit_msg: str = "Auto-commit from Grever", db: Session = Depends(get_db)):
     """
     Push changes to the Git repository for the specified goal.
     """

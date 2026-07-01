@@ -197,19 +197,10 @@ class OptimizationLoop:
             self.state = OptimizationLoopState.CONVERGING
 
             # 获取收敛阈值
-            goal_row = db.execute(
-                text("SELECT convergence_threshold, max_rounds FROM goals WHERE id = :id"),
-                {"id": goal_id}
-            ).mappings().fetchone()
-
-            threshold = 0.05  # 默认 5%
-            max_rounds = 10
-
-            if goal_row:
-                if goal_row.get("convergence_threshold") is not None:
-                    threshold = goal_row["convergence_threshold"]
-                if goal_row.get("max_rounds") is not None:
-                    max_rounds = goal_row["max_rounds"]
+            from models.goal import Goal
+            goal = db.query(Goal).filter(Goal.id == goal_id).first()
+            threshold = goal.convergence_threshold if goal and goal.convergence_threshold is not None else 0.05
+            max_rounds = goal.max_rounds if goal and goal.max_rounds is not None else 10
 
             # 获取方案
             rows = db.execute(

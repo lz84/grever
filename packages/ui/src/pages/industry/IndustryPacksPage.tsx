@@ -39,6 +39,7 @@ import IndustryPackImportDialog from '@/pages/industry/IndustryPackImportDialog'
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '草稿', color: 'bg-gray-100 text-gray-700' },
+  active: { label: '活跃', color: 'bg-green-100 text-green-700' },
   published: { label: '已发布', color: 'bg-green-100 text-green-700' },
   deprecated: { label: '已废弃', color: 'bg-red-100 text-red-700' },
 }

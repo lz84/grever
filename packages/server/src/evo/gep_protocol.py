@@ -1,7 +1,7 @@
 """
 GEP (Genome Evolution Protocol) 协议数据模型
 
-定义 Nexus Evo 的三大核心组件：
+定义 Grever Evo 的三大核心组件：
 - Gene（基因）: 可复用技能/策略的标准化描述
 - Capsule（记忆体）: 一次完整执行过程的记录
 - EvolutionEvent（进化事件）: 进化过程的元数据记录

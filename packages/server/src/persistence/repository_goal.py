@@ -1,5 +1,5 @@
 """
-Nexus Reins 仓库模块 - 目标仓库
+Grever Reins 仓库模块 - 目标仓库
 
 提供 Goal 实体的数据持久化接口
 """

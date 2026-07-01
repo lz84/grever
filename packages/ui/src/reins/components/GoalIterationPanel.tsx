@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/shared/components/ui/select'
 import { goalsApi } from '@/shared/utils/api'
+import { getModeLabel } from '@/shared/utils/modeDisplay'
 
 // ── 状态映射 ──────────────────────────────────────────────────────────────
 
@@ -105,7 +106,7 @@ export default function GoalIterationPanel({ goalId, mode, onStatusChange }: Goa
   }
 
   function modeLabel(m: string): string {
-    return m === 'exploration' ? '探索模式' : m === 'optimization' ? '迭代模式' : '常规模式'
+    return getModeLabel(m)
   }
 
   if (loading) {
@@ -136,14 +137,13 @@ export default function GoalIterationPanel({ goalId, mode, onStatusChange }: Goa
             </div>
             <div className="flex items-center gap-2">
               {/* 模式切换 */}
-              <Select onValueChange={handleSetMode} defaultValue={mode || 'normal'}>
+              <Select onValueChange={handleSetMode} defaultValue={mode || 'engineering'}>
                 <SelectTrigger className="w-[120px] h-8">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="normal">常规模式</SelectItem>
-                  <SelectItem value="exploration">探索模式</SelectItem>
-                  <SelectItem value="optimization">迭代模式</SelectItem>
+                  <SelectItem value="engineering">工程模式</SelectItem>
+                  <SelectItem value="research">研究模式</SelectItem>
                 </SelectContent>
               </Select>
               <Button size="sm" onClick={() => handleAction('start')}>
@@ -174,14 +174,13 @@ export default function GoalIterationPanel({ goalId, mode, onStatusChange }: Goa
             {/* 模式切换 */}
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">模式:</span>
-              <Select onValueChange={handleSetMode} defaultValue={mode || 'normal'}>
+              <Select onValueChange={handleSetMode} defaultValue={mode || 'engineering'}>
                 <SelectTrigger className="w-[110px] h-7 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="normal">常规</SelectItem>
-                  <SelectItem value="exploration">探索</SelectItem>
-                  <SelectItem value="optimization">迭代</SelectItem>
+                  <SelectItem value="engineering">工程模式</SelectItem>
+                  <SelectItem value="research">研究模式</SelectItem>
                 </SelectContent>
               </Select>
             </div>

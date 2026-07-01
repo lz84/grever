@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { HUMAN_REVIEW } from '../../shared/api/paths';
+import { humanReviewApi } from '../../shared/utils/api';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -747,21 +747,18 @@ const RulingsPage: React.FC = () => {
         setItems(data.items || []);
       }
 
-      const statsResponse = await fetch(HUMAN_REVIEW.GET_STATS);
-      if (statsResponse.ok) {
-        const statsData = await statsResponse.json();
-        setStats({
-          total: statsData.total || 0,
-          pending: statsData.pending_count || 0,
-          submitted: statsData.submitted_count || 0,
-          rejected: statsData.rejected_count || 0,
-          disputed: statsData.disputed_count || 0,
-          waiting_human: statsData.waiting_human_count || 0,
-          byType: statsData.by_type || {},
-          byPriority: statsData.by_priority || {},
-          recent: statsData.recent_pending || [],
-        });
-      }
+      const statsData = await humanReviewApi.getStats();
+      setStats({
+        total: statsData.total || 0,
+        pending: statsData.pending_count || 0,
+        submitted: statsData.submitted_count || 0,
+        rejected: statsData.rejected_count || 0,
+        disputed: statsData.disputed_count || 0,
+        waiting_human: statsData.waiting_human_count || 0,
+        byType: statsData.by_type || {},
+        byPriority: statsData.by_priority || {},
+        recent: statsData.recent_pending || [],
+      });
     } catch (error) {
       console.error('Error fetching rulings:', error);
     } finally {
@@ -832,15 +829,9 @@ const RulingsPage: React.FC = () => {
               items: [{ id: quickRulingItem.id, type: quickRulingItem.type, ruling, action: rulingAction }],
               global_ruling: ruling
             };
-            const response = await fetch(HUMAN_REVIEW.BATCH_RULING, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(rulingData)
-            });
-            if (response.ok) {
-              fetchRulings();
-              setQuickRulingModalOpen(false);
-            }
+            await humanReviewApi.batchRuling(rulingData);
+            fetchRulings();
+            setQuickRulingModalOpen(false);
           }
         } else {
           // API 不可达 → 走 batch-ruling
@@ -849,15 +840,9 @@ const RulingsPage: React.FC = () => {
             items: [{ id: quickRulingItem.id, type: quickRulingItem.type, ruling, action: rulingAction }],
             global_ruling: ruling
           };
-          const response = await fetch(HUMAN_REVIEW.BATCH_RULING, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(rulingData)
-          });
-          if (response.ok) {
-            fetchRulings();
-            setQuickRulingModalOpen(false);
-          }
+          await humanReviewApi.batchRuling(rulingData);
+          fetchRulings();
+          setQuickRulingModalOpen(false);
         }
       } else {
         // 待裁决：走 batch-ruling API
@@ -865,15 +850,9 @@ const RulingsPage: React.FC = () => {
           items: [{ id: quickRulingItem.id, type: quickRulingItem.type, ruling, action }],
           global_ruling: ruling
         };
-        const response = await fetch(HUMAN_REVIEW.BATCH_RULING, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(rulingData)
-        });
-        if (response.ok) {
-          fetchRulings();
-          setQuickRulingModalOpen(false);
-        }
+        await humanReviewApi.batchRuling(rulingData);
+        fetchRulings();
+        setQuickRulingModalOpen(false);
       }
     } catch (error) {
       console.error('Error submitting ruling:', error);
@@ -901,19 +880,13 @@ const RulingsPage: React.FC = () => {
       };
 
       try {
-        const response = await fetch(HUMAN_REVIEW.BATCH_RULING, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(rulingData)
-        });
-        if (response.ok) {
-          const result = await response.json();
-          const itemResult = result.results?.[0];
-          if (itemResult?.success) successCount++;
-          else { failedCount++; failedItems.push({ id, type: item?.type || 'unknown', error: itemResult?.error || '裁决失败' }); }
+        const result = await humanReviewApi.batchRuling(rulingData);
+        const itemResult = result?.results?.[0];
+        if (itemResult?.success) {
+          successCount++;
         } else {
           failedCount++;
-          failedItems.push({ id, type: item?.type || 'unknown', error: 'Request failed' });
+          failedItems.push({ id, type: item?.type || 'unknown', error: itemResult?.error || '裁决失败' });
         }
       } catch (err: any) {
         failedCount++;
@@ -955,7 +928,7 @@ const RulingsPage: React.FC = () => {
         <div className="flex justify-between items-center mb-4">
           <div>
             <h1 className="text-xl font-bold text-slate-900">裁决中心</h1>
-            <p className="text-sm text-slate-500">Human Ruling Dashboard</p>
+            <p className="text-sm text-slate-500">Human In The Loop</p>
           </div>
           <Button variant="outline" size="sm" onClick={refreshData}>
             <RefreshCw className="w-4 h-4" />

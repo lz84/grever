@@ -1,5 +1,5 @@
 """
-Nexus Reins 数据模型 — 兼容层
+Grever Reins 数据模型 — 兼容层
 
 枚举类已迁移到 reins.models.enums，此处仅做 re-export。
 数据类（Goal, Project, Task, AgentInfo, Dispute 等）仍在此定义。

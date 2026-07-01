@@ -1,5 +1,5 @@
 """
-Nexus Reins Manager 基类
+Grever Reins Manager 基类
 提供持久化支持
 """
 

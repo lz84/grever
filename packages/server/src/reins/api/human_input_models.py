@@ -16,12 +16,12 @@ class HumanInputRequest(BaseModel):
     description: Optional[str] = None
     input_type: str  # confirmation, approval, data_entry, selection, etc.
     status: str  # pending, submitted, rejected, cancelled
-    input_data: Optional[Dict[str, Any]] = None
+    input_data: Optional[Any] = None  # accepts dict or string (auto-parsed)
     submitted_by: Optional[str] = None
     submitted_at: Optional[str] = None
     created_at: str
     updated_at: str
-    context: Optional[Dict[str, Any]] = None  # 任务上下文信息
+    context: Optional[Any] = None  # 任务上下文信息
 
 class CreateHumanInputRequest(BaseModel):
     """创建人类输入请求"""

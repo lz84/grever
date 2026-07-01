@@ -23,13 +23,16 @@ class HumanInputRequest(Base):
     description = Column(Text, nullable=True)
     input_type = Column(String(50), default='confirmation')  # confirmation, approval, data_entry, selection
     status = Column(String(20), default='pending')
-    schema_json = Column(Text, nullable=True)  # 存储输入表单的 schema
     input_data = Column(Text, nullable=True)  # 存储用户提交的数据
     submitted_by = Column(String(100), nullable=True)
     submitted_at = Column(DateTime, nullable=True)
     rejected_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # DB 中实际存在但 model 缺少的字段
+    context = Column(Text, nullable=True)  # 请求上下文
+    executor_type = Column(String(50), nullable=True)  # 执行者类型
 
     # Sprint 79: HITL扩展 - 支持 Goal/Project 级
     goal_id = Column(String(36), nullable=True)
@@ -69,7 +72,6 @@ class HumanInputRequest(Base):
             'description': self.description,
             'input_type': self.input_type,
             'status': self.status,
-            'schema_json': self.schema_json,
             'input_data': self.input_data,
             'default_value': self.default_value,
             'timeout_action': self.timeout_action,

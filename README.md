@@ -1,10 +1,10 @@
-# Nexus — AI Agent 团队协作框架
+# Grever — AI Agent 团队协作框架
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![React 18+](https://img.shields.io/badge/React-18+-blue.svg)](https://react.dev/)
 
-Nexus 是一个**面向 AI Agent 团队的协作编排框架**。它帮助团队管理战略目标分解、智能体任务分配、人机协作审批和持续进化。
+Grever 是一个**面向 AI Agent 团队的协作编排框架**。它帮助团队管理战略目标分解、智能体任务分配、人机协作审批和持续进化。
 
 **适合谁：**
 - 🏢 企业：用 AI Agent 替代重复性人工流程
@@ -63,7 +63,7 @@ pip install -r requirements.txt
 alembic upgrade head
 
 # 启动
-uvicorn api.server:app --host 0.0.0.0 --port 8097 --reload
+uvicorn api.server:app --host 0.0.0.0 --port 8096 --reload
 ```
 
 ### 前端
@@ -86,9 +86,9 @@ docker-compose up -d
 
 ### 访问
 
-- 前端：http://localhost:5173
-- 后端 API：http://localhost:8097
-- API 文档：http://localhost:8097/docs
+- 前端：http://localhost
+- 后端 API：http://localhost/api/v1/
+- API 文档：http://localhost/api/v1/docs
 
 ## 项目结构
 
@@ -137,7 +137,7 @@ docker-compose up -d
 
 ## 致谢
 
-Nexus 受到以下项目的启发：
+Grever 受到以下项目的启发：
 - [Dify](https://dify.ai) — AI 应用搭建平台
 - [LangGraph](https://github.com/langchain-ai/langgraph) — Agent 工作流编排
 - [CrewAI](https://github.com/crewAIInc/crewAI) — 多 Agent 协作

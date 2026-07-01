@@ -1,6 +1,5 @@
 ﻿import { useState, useEffect } from 'react'
-import { GRASP } from '../../shared/api/paths'
-import { agentsApi } from '../../shared/utils/api'
+import { agentsApi, graspApi } from '../../shared/utils/api'
 import { Brain, Activity, Target, BookOpen, Zap, TrendingUp, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/components/ui/card'
 import { Badge } from '@/shared/components/ui/badge'
@@ -51,11 +50,11 @@ export default function CognitiveAssessment() {
         let assessment = null
         let fetchFailed = false
         try {
-          const res = await fetch(GRASP.COGNITION_ASSESSMENT(agent.id))
-          if (!res.ok) {
+          let fetchFailed = false
+          try {
+            assessment = await graspApi.cognitionAssessment(agent.id)
+          } catch {
             fetchFailed = true
-          } else {
-            assessment = await res.json()
           }
         } catch {
           fetchFailed = true

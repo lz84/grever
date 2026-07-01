@@ -1,5 +1,5 @@
 """
-Nexus Reins 迁移系统
+Grever Reins 迁移系统
 支持 SQLite 到 PostgreSQL 的迁移脚本生成
 """
 

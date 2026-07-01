@@ -7,6 +7,7 @@ from typing import Optional
 from .base import Base
 from .schema_factory import auto_schema
 
+
 class Agent(Base):
     __tablename__ = 'agents'
 
@@ -16,7 +17,7 @@ class Agent(Base):
     tag_weights = relationship('AgentTagWeight', back_populates='agent', lazy='select', cascade='all, delete-orphan')
     status = Column(String(20), nullable=False)
     address = Column(String(500), nullable=True)
-    meta_data = Column('metadata', Text, nullable=True)  # JSON
+    meta_data = Column('metadata', Text, nullable=True)  # DB column is 'metadata', Python attr is 'meta_data' to avoid SQLAlchemy reserved name
     load = Column(Integer, nullable=False, default=0)
     current_tasks = Column(Integer, nullable=False, default=0)
     registered_at = Column(DateTime, nullable=False)
@@ -33,6 +34,7 @@ class Agent(Base):
     consecutive_offline_count = Column(Integer, nullable=True, default=0)
     max_offline_before_deactivate = Column(Integer, nullable=True, default=5)
     platform_type = Column(String(32), nullable=False, default='openclaw')
+    agent_code = Column(String(32), nullable=True)  # OpenClaw agent code (replaces hardcoded UUID mapping)
 
     # Relationship to agents_config (config per platform)
     config_relationship = relationship(
@@ -53,6 +55,22 @@ class Agent(Base):
             except (json.JSONDecodeError, TypeError):
                 return {}
         return {}
+
+
+def _get_agent_metadata(self) -> dict:
+    """Compat property: maps meta_data (ORM) → metadata (API)."""
+    import json
+    if self.meta_data:
+        try:
+            return json.loads(self.meta_data)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+# Define metadata property AFTER class definition to avoid SQLAlchemy declarative capturing it
+Agent.metadata = property(_get_agent_metadata)
+
 
 AgentSchema, AgentCreate, AgentUpdate = auto_schema(Agent)
 

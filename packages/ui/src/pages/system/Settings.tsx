@@ -591,7 +591,7 @@ function OpenClawPanel({ data, onSave }: { data?: Record<string, ConfigValue>; o
             <Link className="w-5 h-5" />
             OpenClaw 集成配置
           </CardTitle>
-          <CardDescription>管理 Nexus 与 OpenClaw 的连接参数</CardDescription>
+          <CardDescription>管理 Grever 与 OpenClaw 的连接参数</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Connection Status */}
@@ -723,7 +723,7 @@ function SystemPanel({ data, onSave }: { data?: Record<string, ConfigValue>; onS
           <SettingsIcon className="w-5 h-5" />
           系统参数
         </CardTitle>
-        <CardDescription>Nexus 自身运行参数配置</CardDescription>
+        <CardDescription>Grever 自身运行参数配置</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
@@ -793,7 +793,7 @@ function SecurityPanel({ data }: { data?: Record<string, ConfigValue> }) {
   const [apiAuth, setApiAuth] = useState(false)
   const [corsOrigins, setCorsOrigins] = useState('http://localhost:5173')
   const [tokens, setTokens] = useState<{ id: string; name: string; created: string }[]>([
-    { id: 'tkn-001', name: 'Nexus Frontend', created: '2026-05-01' },
+    { id: 'tkn-001', name: 'Grever Frontend', created: '2026-05-01' },
   ])
   const [auditLogs] = useState([
     { time: '2026-05-08 20:00', action: '更新配置', user: 'admin', detail: '修改 log_level' },

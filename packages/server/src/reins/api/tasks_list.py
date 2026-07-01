@@ -70,3 +70,46 @@ def list_tasks(
 
     tasks = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
     return {"tasks": [task.to_dict() for task in tasks], "total": total, "skip": skip, "limit": limit}
+
+@router.get("/count")
+def task_count(
+    group_by: str = Query(default="goal", description="分组维度：goal"),
+    goal_id: Optional[str] = Query(default=None, description="按目标 ID 过滤"),
+    project_id: Optional[str] = Query(default=None, description="按项目 ID 过滤"),
+    db: Session = Depends(get_db),
+):
+    """统计任务数量。
+
+    - `?group_by=goal` → {goal_id: {completed, total}}  按目标分组
+    - `?group_by=goal&goal_id=xxx` → {completed, total}  单个目标的进度
+    - `?project_id=xxx` → {completed, total}  单个项目的进度
+    """
+    from sqlalchemy import case
+    subq = db.query(Project.id, Project.goal_id).subquery()
+
+    # 单个 project 的任务统计
+    if project_id:
+        row = db.query(
+            func.count(Task.id).label('total'),
+            func.sum(case((Task.status.in_(['done', 'completed']), 1), else_=0)).label('completed')
+        ).filter(Task.project_id == project_id).first()
+        return {"project_id": project_id, "completed": row[1] or 0, "total": row[0]}
+
+    # 单个 goal 的任务统计
+    if goal_id:
+        subq_filtered = db.query(Project.id, Project.goal_id).filter(
+            Project.goal_id == goal_id
+        ).subquery()
+        row = db.query(
+            func.count(Task.id).label('total'),
+            func.sum(case((Task.status.in_(['done', 'completed']), 1), else_=0)).label('completed')
+        ).join(subq_filtered, Task.project_id == subq_filtered.c.id).first()
+        return {"goal_id": goal_id, "completed": row[1] or 0, "total": row[0]}
+
+    # 按 goal_id 分组统计
+    rows = db.query(
+        subq.c.goal_id,
+        func.count(Task.id).label('total'),
+        func.sum(case((Task.status.in_(['done', 'completed']), 1), else_=0)).label('completed')
+    ).join(subq, Task.project_id == subq.c.id).group_by(subq.c.goal_id).all()
+    return {row[0]: {"completed": row[2] or 0, "total": row[1]} for row in rows if row[0]}

@@ -1,4 +1,4 @@
-"""Nexus 日志查询模块"""
+"""Grever 日志查询模块"""
 import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -16,7 +16,7 @@ class LogQuery:
 
     def __init__(self, log_dir: Optional[Path] = None):
         self.log_dir = log_dir or _LOG_DIR
-        self.json_log = self.log_dir / 'nexus-json.log'
+        self.json_log = self.log_dir / 'grever-json.log'
 
     def query(
         self,

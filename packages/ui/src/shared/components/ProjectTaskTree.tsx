@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PROJECTS } from '../api/paths';
+import { projectsApi } from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { getAgentName } from '../utils/agentMap';
 import {
@@ -322,11 +322,7 @@ export default function ProjectTaskTree({ projectId }: { projectId: string }) {
     setLoading(true);
     setError(null);
     
-    fetch(PROJECTS.GET_TASK_TREE(projectId))
-      .then(r => { 
-        if (!r.ok) throw new Error(`HTTP ${r.status}`); 
-        return r.json(); 
-      })
+    projectsApi.getTaskTree(projectId)
       .then(data => {
         const allTasks: TaskNode[] = data.root_tasks || [];
         const taskMap: Record<string, TaskNode> = {};
@@ -357,8 +353,7 @@ export default function ProjectTaskTree({ projectId }: { projectId: string }) {
         };
 
         // Fetch project details to get the actual project name
-        fetch(PROJECTS.GET(projectId))
-          .then(r => r.json())
+        projectsApi.get(projectId)
           .then(proj => {
             projectRoot.title = proj.name || '工程';
             projectRoot.description = proj.description || '';

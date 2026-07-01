@@ -1,5 +1,5 @@
 """
-Nexus Reins 数据库模块
+Grever Reins 数据库模块
 
 提供 SQLAlchemy 数据库连接管理（ReinsServer ORM 专用）
 所有配置来自 database.config（统一配置中心）
@@ -68,8 +68,8 @@ def get_db() -> Generator[Session, None, None]:
     """
     FastAPI 依赖注入用数据库会话
     
-    使用简单 generator（不用 @contextmanager），
-    兼容 Python 3.13 + FastAPI 的依赖注入系统。
+    使用简单 generator，兼容 Python 3.13 + FastAPI。
+    finally 中关闭 session，FastAPI 会在响应序列化完成后再恢复 generator。
     """
     db = get_db_session()
     try:

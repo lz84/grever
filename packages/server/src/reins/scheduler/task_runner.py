@@ -13,33 +13,35 @@ import json
 from loguru import logger
 import sys
 import re
-from sqlalchemy import text
 from pathlib import Path
 from typing import Dict, Any, Optional
 from asyncio.subprocess import Process
 
 # 添加 packages/server 到 Python 路径
-NEXUS_DIR = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(NEXUS_DIR / "packages" / "server"))
+GREVER_DIR = Path(__file__).parent.parent.parent.parent.parent.parent  # → agents-nexus project root
+sys.path.insert(0, str(GREVER_DIR / "packages" / "server"))
 
 from shared.database.config import DB_CONFIG
+from models.task import Task
 
 # 路径配置
 OPENCLAW_MJS = Path("C:/Users/liuzh/AppData/Roaming/npm/node_modules/openclaw/openclaw.mjs")
-NEXUS_LOGS_DIR = Path("D:/work/research/agents-nexus/logs")
+GREVER_LOGS_DIR = Path("D:/work/research/agents-nexus/logs")
 
 # DB path for building execution context
-NEXUS_DB_PATH = str(NEXUS_DIR / "data" / "reins.db")
+GREVER_DB_PATH = str(GREVER_DIR / "data" / "reins.db")
 
-# Nexus Agent UUID → OpenClaw Agent Code 映射
-# 来源：openclaw.json agents.list[].id 与 reins.db agents 表的 id 对应关系
-AGENT_UUID_TO_CODE: dict[str, str] = {
-    "fefd19b0-7c1a-4927-b294-c795c76afb9f": "main",
-    "876b9322-0fbe-4cd0-97c2-9244a4e3b905": "stock-trader",
-    "9d899c03-4ada-45a7-805a-b2f0fb4ebb24": "coder",
-    "8817e140-2c46-40d8-9444-a6bca8a8e8fb": "wenzi",
-    "3745f1f0-b67d-4287-a10b-e71b3ff17e97": "kouzi",
-}
+def _resolve_agent_code(agent_id: str) -> str | None:
+    """Resolve agent UUID to OpenClaw agent code via DB."""
+    try:
+        from shared.database.agent_resolver import get_agent_code
+        from reins.common.database import get_db_session
+        with get_db_session() as session:
+            return get_agent_code(session, agent_id)
+    except Exception as e:
+        logger.debug(f"[task_runner] agent_resolver unavailable: {e}")
+        return None
+
 
 def build_task_prompt(task: Dict[str, Any], db=None) -> str:
     """
@@ -112,7 +114,7 @@ def build_task_prompt(task: Dict[str, Any], db=None) -> str:
     
     return "\n\n".join(parts)
 
-async def launch(task: Dict[str, Any], agent_id: str, nexus_url: str = "", db=None) -> Process:
+async def launch(task: Dict[str, Any], agent_id: str, grever_url: str = "", db=None) -> Process:
     """
     异步启动 OpenClaw CLI 执行任务
     
@@ -121,14 +123,14 @@ async def launch(task: Dict[str, Any], agent_id: str, nexus_url: str = "", db=No
     参数：
         task: 任务字典
         agent_id: Agent UUID
-        nexus_url: Nexus 服务器 URL
+        grever_url: Grever 服务器 URL
         db: 数据库管理器实例（用于构建完整执行上下文）
     """
     task_id = task.get('id', '')
-    session_id = f"nexus-{task_id}"
+    session_id = f"grever-{task_id}"
     
     # 确保 logs 目录存在
-    NEXUS_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    GREVER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # 构建 prompt（使用统一 context builder，如果有 db）
     prompt = build_task_prompt(task, db=db)
@@ -140,18 +142,20 @@ async def launch(task: Dict[str, Any], agent_id: str, nexus_url: str = "", db=No
     if db and task_id and prompt and len(prompt) > 50:
         try:
             ctx_summary = prompt[:8000]  # prompt 就是完整的执行上下文
-            with db.engine.connect() as conn:
-                conn.execute(
-                    text("UPDATE tasks SET context_md = :cmd, updated_at = CURRENT_TIMESTAMP WHERE id = :tid"),
-                    {"cmd": ctx_summary, "tid": task_id}
+            session = db.get_session()
+            try:
+                session.query(Task).filter(Task.id == task_id).update(
+                    {"context_md": ctx_summary, "updated_at": int(__import__('time').time())}
                 )
-                conn.commit()
+                session.commit()
+            finally:
+                session.close()
             logger.info(f"[task_runner] Wrote context_md ({len(ctx_summary)} chars) to DB for task {task_id}")
         except Exception as e:
             logger.warning(f"[task_runner] Failed to write context_md for {task_id}: {e}")
     
-    # 从 agent UUID 解析 OpenClaw agent code
-    agent_name = AGENT_UUID_TO_CODE.get(agent_id)
+    # 从 agent UUID 解析 OpenClaw agent code（DB 动态查询，不再硬编码）
+    agent_name = _resolve_agent_code(agent_id)
     if not agent_name:
         logger.warning(f"[task_runner] Unknown agent UUID {agent_id}, falling back to 'main'")
         agent_name = 'main'
@@ -176,7 +180,7 @@ async def launch(task: Dict[str, Any], agent_id: str, nexus_url: str = "", db=No
     # 启动子进程（非阻塞）
     process = await asyncio.create_subprocess_exec(
         *cmd,
-        cwd=str(NEXUS_DIR),
+        cwd=str(GREVER_DIR),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -240,9 +244,9 @@ def write_result_file(task_id: str, output: str, exit_code: int) -> Dict[str, An
     返回：
         结果字典
     """
-    NEXUS_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    GREVER_LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
-    result_file = NEXUS_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
+    result_file = GREVER_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
     
     # 判断成功/失败
     # OpenClaw agent 退出码不准确（总是 0 或 1）
@@ -290,7 +294,7 @@ async def read_result(task_id: str) -> Optional[Dict[str, Any]]:
     """
     读取任务执行结果 JSON 文件
     """
-    result_file = NEXUS_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
+    result_file = GREVER_LOGS_DIR / f"nexus_result_{task_id.replace('-', '_')}.json"
     
     if not result_file.exists():
         logger.warning(f"[task_runner] Result file not found: {result_file}")

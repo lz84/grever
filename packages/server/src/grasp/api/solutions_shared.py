@@ -80,5 +80,117 @@ class StartIterationRequest(BaseModel):
 class IterateRequest(BaseModel):
     constraint_adjustments: Optional[Dict[str, Any]] = None
 
+
+# ============ 迭代回路支撑函数 (供 goals_exploration_iteration.py 调用) ============
+
+def auto_capture_solution(goal_id: str, db: Session) -> Optional[Dict[str, Any]]:
+    """
+    自动捕获当前最佳方案作为新轮次候选。
+    返回创建的 Solution 记录 dict，或 None（无可捕获内容时）。
+    """
+    from models import Goal
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
+        return None
+
+    from models import Solution
+    from sqlalchemy import func
+    max_round = db.query(func.max(Solution.round)).filter(
+        Solution.goal_id == goal_id
+    ).scalar() or 0
+
+    if max_round == 0:
+        solution_id = f"sol-{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow()
+        sol = Solution(
+            id=solution_id,
+            goal_id=goal_id,
+            round=1,
+            name="初始方案",
+            parameters=goal.context_md or "{}",
+            score=0.0,
+            status="candidate",
+            is_optimal=False,
+            created_at=now,
+        )
+        db.add(sol)
+        db.commit()
+        return {"id": solution_id, "goal_id": goal_id, "round": 1, "name": "初始方案"}
+    return None
+
+
+def compare_solutions(goal_id: str, db: Session) -> Dict[str, Any]:
+    """
+    对比当前轮次所有方案，更新 is_optimal 标记。
+    返回 {"updated": N} 表示更新的方案数量。
+    """
+    from models import Solution
+    from sqlalchemy import func
+
+    max_score = db.query(func.max(Solution.score)).filter(
+        Solution.goal_id == goal_id
+    ).scalar() or 0.0
+
+    current_round = db.query(func.max(Solution.round)).filter(
+        Solution.goal_id == goal_id
+    ).scalar() or 1
+
+    updated = 0
+    if max_score > 0:
+        db.query(Solution).filter(
+            Solution.goal_id == goal_id,
+            Solution.is_optimal == True,
+        ).update({"is_optimal": False})
+        rows = db.query(Solution).filter(
+            Solution.goal_id == goal_id,
+            Solution.round == current_round,
+        ).all()
+        for row in rows:
+            if row.score == max_score:
+                row.is_optimal = True
+                updated += 1
+        db.commit()
+    return {"updated": updated}
+
+
+def adjust_constraints_for_next_round(goal_id: str, db: Session) -> Dict[str, Any]:
+    """
+    根据当前收敛情况，生成下一轮约束调整建议。
+    """
+    from models import Solution, IterationConstraint
+    from sqlalchemy import func
+
+    current_round = db.query(func.max(Solution.round)).filter(
+        Solution.goal_id == goal_id
+    ).scalar() or 1
+
+    last_constraints = db.query(IterationConstraint).filter(
+        IterationConstraint.goal_id == goal_id,
+        IterationConstraint.round == current_round,
+    ).first()
+
+    new_constraints = {}
+    if last_constraints:
+        try:
+            old = json.loads(last_constraints.constraints) if isinstance(last_constraints.constraints, str) else (last_constraints.constraints or {})
+        except Exception:
+            old = {}
+        new_constraints = dict(old)
+
+    next_round = current_round + 1
+    ic = IterationConstraint(
+        id=f"ic-{uuid.uuid4().hex[:12]}",
+        goal_id=goal_id,
+        round=next_round,
+        constraints=json.dumps(new_constraints, ensure_ascii=False),
+        reason="自动调整约束",
+        created_by="system",
+        created_at=datetime.utcnow().isoformat(),
+    )
+    db.add(ic)
+    db.commit()
+    return {"new_constraints": new_constraints}
+
+
 # ============ 工具函数 ============
 

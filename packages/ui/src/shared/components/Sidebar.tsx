@@ -138,7 +138,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) 
             </div>
             {!collapsed && (
               <span className="text-lg font-bold tracking-tight text-slate-900 italic whitespace-nowrap">
-                Nexus<span className="text-blue-600 font-normal">OS</span>
+                Grever<span className="text-blue-600 font-normal">OS</span>
               </span>
             )}
           </div>

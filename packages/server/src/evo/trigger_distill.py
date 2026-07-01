@@ -301,4 +301,4 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     result = run_distillation(lookback_days=args.lookback)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    logging.info(json.dumps(result, indent=2, ensure_ascii=False))

@@ -12,8 +12,8 @@ def get_api_features():
     """
     features = {
         "goal_id": "goal-cb4c76143b4c",
-        "title": "Nexus Backend API Features",
-        "description": "Nexus平台后端API功能特性汇总",
+        "title": "Grever Backend API Features",
+        "description": "Grever平台后端API功能特性汇总",
         "features": {
             "task_management": {
                 "title": "任务管理",

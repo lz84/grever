@@ -28,7 +28,8 @@ export function TaskFailureLog({ taskId }: TaskFailureLogProps) {
     try {
       setLoading(true)
       const data = await tasksApi.getFailureLog(taskId)
-      setLogs(Array.isArray(data) ? data : data ? [data] : [])
+      // API 返回 {task_id, failures: []}，取 failures 字段
+      setLogs(Array.isArray(data) ? data : (data && 'failures' in data) ? data.failures : [])
     } catch {
       setLogs([])
     } finally {

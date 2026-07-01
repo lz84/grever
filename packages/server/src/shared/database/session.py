@@ -5,7 +5,7 @@
 所有配置来自 database.config（统一配置中心）
 """
 
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker
 from typing import Optional, Generator
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,6 @@ class DatabaseSessionManager:
     def __init__(self):
         self._engine = get_engine()
         self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self._engine)
-        self._Session = scoped_session(self._SessionLocal)
         
         # 初始化数据库表
         self._init_db()
@@ -36,13 +35,9 @@ class DatabaseSessionManager:
         from shared.database import models
         Base.metadata.create_all(bind=self._engine)
     
-    def get_session(self):
+    def get_session(self) -> Session:
         """获取数据库会话"""
-        return self._Session()
-    
-    def close_session(self):
-        """关闭当前会话"""
-        self._Session.remove()
+        return self._SessionLocal()
     
     def close_engine(self):
         """关闭数据库引擎"""
@@ -78,4 +73,4 @@ def get_db_session() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
-        get_database_manager().close_session()
+        db.close()

@@ -9,10 +9,10 @@ from loguru import logger
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from sqlalchemy import text
+from sqlalchemy import text, select
 
 from api.app_state import get_reins, get_db_manager, set_probe_detector
-from reins.nexus_log import LogEngine
+from reins.log import LogEngine
 from models import TriggerMode
 
 @asynccontextmanager
@@ -28,8 +28,8 @@ async def lifespan_handler(app: FastAPI):
 
     # ── 启动 ───────────────────────────────────────────────────────────────
     try:
-        from reins.scheduler import NexusScheduler, set_scheduler
-        sched = NexusScheduler(db_manager=db_manager)
+        from reins.scheduler import GreverScheduler, set_scheduler
+        sched = GreverScheduler(db_manager=db_manager)
         set_scheduler(sched)
         await sched.start()
         logger.info(f"[Startup] Scheduler started (tick={sched.stats.total_ticks})")
@@ -43,31 +43,33 @@ async def lifespan_handler(app: FastAPI):
         logger.warning(f"[Startup] Report repos init warning: {e}")
 
     try:
-        with db_manager.engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT id, name, capability_tags, address, metadata, trigger_mode, "
-                "poll_interval_seconds, model_name FROM agents WHERE health_status != 'removed'"
-            )).fetchall()
-        registered = 0
-        for row in rows:
-            try:
-                ct = row.capability_tags or '{}'
-                caps = json.loads(ct) if isinstance(ct, str) else (ct or {})
-                # Extract technical capabilities from the new format for legacy register
-                technical = caps.get("technical", []) if isinstance(caps, dict) else []
-                reins.register_agent(
-                    agent_id=row.id, name=row.name,
-                    capabilities=technical,
-                    address=row.address,
-                    metadata=json.loads(row.metadata) if row.metadata else {},
-                    trigger_mode=TriggerMode(row.trigger_mode or "sse"),
-                    poll_interval_seconds=row.poll_interval_seconds or 10,
-                    model_name=row.model_name or "",
-                )
-                registered += 1
-            except Exception as e:
-                logger.warning(f"[Startup] Failed to re-register agent {row.id}: {e}")
-        logger.info(f"[Startup] Re-registered {registered} agents from DB")
+        from models import Agent
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(
+                select(Agent).where(Agent.health_status != 'removed')
+            ).scalars().all()
+            registered = 0
+            for agent in rows:
+                try:
+                    ct = agent.capability_tags or '{}'
+                    caps = json.loads(ct) if isinstance(ct, str) else (ct or {})
+                    technical = caps.get("technical", []) if isinstance(caps, dict) else []
+                    reins.register_agent(
+                        agent_id=agent.id, name=agent.name,
+                        capabilities=technical,
+                        address=agent.address,
+                        metadata=json.loads(agent.meta_data) if agent.meta_data else {},
+                        trigger_mode=TriggerMode(agent.trigger_mode or "sse"),
+                        poll_interval_seconds=agent.poll_interval_seconds or 10,
+                        model_name=agent.model_name or "",
+                    )
+                    registered += 1
+                except Exception as e:
+                    logger.warning(f"[Startup] Failed to re-register agent {agent.id}: {e}")
+            logger.info(f"[Startup] Re-registered {registered} agents from DB")
+        finally:
+            session.close()
     except Exception as e:
         logger.warning(f"[Startup] Agent re-registration warning: {e}")
 

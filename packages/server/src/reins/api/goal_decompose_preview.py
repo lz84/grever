@@ -71,7 +71,7 @@ def preview_auto_decompose_goal(
     use_scenario: bool = Query(True, description="是否使用 Grasp 认知注入"),
 ):
     """自动分解目标为子项目（预览模式，不持久化）"""
-    db = get_db_session()
+    db = next(get_db_session())
 
     try:
         goal = db.query(Goal).filter(Goal.id == goal_id).first()
@@ -120,7 +120,7 @@ def preview_auto_decompose(
     use_scenario: bool = Query(True, description="是否使用 Grasp 认知注入"),
 ):
     """预览自动分解结果（只分解不创建项目）"""
-    db = get_db_session()
+    db = next(get_db_session())
 
     try:
         goal = db.query(Goal).filter(Goal.id == goal_id).first()

@@ -65,7 +65,7 @@ def _create_valid_pack(
     contents: list = None,
     pack_type: str = "standard",
 ) -> bytes:
-    """Create a valid .nexus-pack zip file with correct checksums."""
+    """Create a valid .grever-pack zip file with correct checksums."""
     if dependencies is None:
         dependencies = []
     if contents is None:
@@ -609,14 +609,14 @@ class TestWithRealDB:
             pytest.skip(f"Real database not available: {e}")
 
     def _get_pack_path(self) -> Path:
-        """Get path to test-pack.nexus-pack (7 parent levels from test file)."""
-        return Path(__file__).parent.parent.parent.parent.parent.parent.parent / "data" / "test-pack.nexus-pack"
+        """Get path to test-pack.grever-pack (7 parent levels from test file)."""
+        return Path(__file__).parent.parent.parent.parent.parent.parent.parent / "data" / "test-pack.grever-pack"
 
     def test_import_real_pack(self, real_db_session):
         """导入真实导出 pack 应该成功"""
         pack_path = self._get_pack_path()
         if not pack_path.exists():
-            pytest.skip(f"test-pack.nexus-pack not found at {pack_path}. Run _export_test_pack.py first.")
+            pytest.skip(f"test-pack.grever-pack not found at {pack_path}. Run _export_test_pack.py first.")
 
         pack_bytes = pack_path.read_bytes()
 
@@ -640,7 +640,7 @@ class TestWithRealDB:
         """重复导入真实 pack (create) 应该失败"""
         pack_path = self._get_pack_path()
         if not pack_path.exists():
-            pytest.skip(f"test-pack.nexus-pack not found at {pack_path}.")
+            pytest.skip(f"test-pack.grever-pack not found at {pack_path}.")
 
         # First, ensure the pack exists
         row = real_db_session.execute(

@@ -1,9 +1,9 @@
 """
-Nexus 统一异常处理模块
+Grever 统一异常处理模块
 """
 
 from .exceptions import (
-    NexusException,
+    GreverException,
     BusinessException,
     ValidationException,
     AuthenticationException,
@@ -15,7 +15,7 @@ from .exceptions import (
 )
 
 __all__ = [
-    'NexusException',
+    'GreverException',
     'BusinessException',
     'ValidationException',
     'AuthenticationException',

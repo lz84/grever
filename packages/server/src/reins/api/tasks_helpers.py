@@ -28,9 +28,11 @@ def _validate_task_constraints(task_data) -> Optional[str]:
 
     # Sprint 85: capability_tags 必须设置（仅 TaskCreate）
     # TaskUpdate 时 capability_tags 可选
+    # Bug fix: 当有 project_id 时允许为空，因为后端会从 Project 继承 capability_tags
     capability_tags = getattr(task_data, 'capability_tags', None)
-    if 'capability_tags' in unset_fields and not capability_tags:
-        return "capability_tags 必须设置（四维标签字典），用于匹配引擎分配 Agent"
+    project_id = getattr(task_data, 'project_id', None)
+    if 'capability_tags' in unset_fields and not capability_tags and not project_id:
+        return "capability_tags 必须设置（四维标签字典），用于匹配引擎分配 Agent。如果关联了 Project，将自动从 Project 继承。"
     if isinstance(capability_tags, str):
         try:
             capability_tags = json.loads(capability_tags)
@@ -66,6 +68,7 @@ def _update_goal_progress(db, goal_id: str) -> Optional[dict]:
     from models.task import Task
     from models.project import Project
     from datetime import datetime
+    from reins.scheduler.statemachine import GoalStateMachine
 
     goal = db.query(GoalModel).filter(GoalModel.id == goal_id).first()
     if not goal:
@@ -88,11 +91,12 @@ def _update_goal_progress(db, goal_id: str) -> Optional[dict]:
     goal.progress = progress_percent
     goal.updated_at = datetime.now()
 
+    # 通过状态机处理状态变更
+    fsm = GoalStateMachine(db, goal_id)
     if completed_tasks == total_tasks:
-        goal.status = "completed"
-        goal.completed_at = datetime.now()
+        fsm.transition("completed", reason="所有任务完成", extra={"completed_at": datetime.now(), "updated_at": int(datetime.now().timestamp())})
     elif blocked_tasks > 0:
-        goal.status = "blocked"
+        fsm.transition("failed", reason="存在阻塞任务", extra={"updated_at": int(datetime.now().timestamp())})
 
     return {
         "goal_id": goal_id,
@@ -105,12 +109,9 @@ def _get_goal_id_from_project(db, project_id: Optional[str]) -> Optional[str]:
     """通过 project_id 推导 goal_id(task 不再直接关联 goal)"""
     if not project_id:
         return None
-    from sqlalchemy import text
-    row = db.execute(
-        text("SELECT goal_id FROM projects WHERE id = :pid"),
-        {"pid": project_id}
-    ).fetchone()
-    return row[0] if row else None
+    from models.project import Project
+    project = db.query(Project.goal_id).filter(Project.id == project_id).first()
+    return project[0] if project else None
 
 def _parse_agent_result(result: str) -> Dict[str, Any]:
     """

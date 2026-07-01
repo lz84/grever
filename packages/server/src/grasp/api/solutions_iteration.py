@@ -1,4 +1,4 @@
-from sqlalchemy import text
+
 import json
 import uuid
 from datetime import datetime
@@ -12,8 +12,19 @@ from reins.common.database import get_db
 from grasp.api.solutions_consensus import _apply_consensus
 from grasp.api.solutions_discussion import _generate_ai_reply
 from grasp.api.solutions_iteration_helpers import _generate_ai_analysis, CreateIterationRequest, DiscussRequest
+from models import GoalIteration
 
 router = APIRouter()
+
+def _parse_discussion_list(ai_discussion):
+    """Parse ai_discussion JSON field"""
+    import json
+    if not ai_discussion:
+        return []
+    try:
+        return json.loads(ai_discussion)
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 def create_iteration(goal_id: str, req: CreateIterationRequest = Body(default=None), db: Session = Depends(get_db)):
     """
@@ -22,40 +33,31 @@ def create_iteration(goal_id: str, req: CreateIterationRequest = Body(default=No
     返回: {"id": "iter-xxx", "iteration_number": 3, "status": "planned"}
     """
     # 验证 goal 存在
-    goal_row = db.execute(
-        text("SELECT id, title FROM goals WHERE id = :id"),
-        {"id": goal_id}
-    ).mappings().fetchone()
-    if not goal_row:
+    from models.goal import Goal
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    # 计算下一个 iteration_number
-    max_row = db.execute(
-        text("SELECT COALESCE(MAX(iteration_number), 0) as max_num FROM goal_iterations WHERE goal_id = :gid"),
-        {"gid": goal_id}
-    ).mappings().fetchone()
-    next_number = (max_row["max_num"] if max_row else 0) + 1
+    # 计算下一个 iteration_number（使用 func.coalesce + func.max）
+    from sqlalchemy import func
+    max_row = db.query(func.coalesce(func.max(GoalIteration.iteration_number), 0)).filter(
+        GoalIteration.goal_id == goal_id
+    ).scalar()
+    next_number = (max_row or 0) + 1
 
     # 创建迭代记录
     iter_id = f"iter-{uuid.uuid4().hex[:12]}"
     now_iso = datetime.utcnow().isoformat()
 
-    db.execute(
-        text("""
-            INSERT INTO goal_iterations
-                (id, goal_id, iteration_number, status, created_at, updated_at)
-            VALUES
-                (:id, :goal_id, :iter_num, :status, :created_at, :updated_at)
-        """),
-        {
-            "id": iter_id,
-            "goal_id": goal_id,
-            "iter_num": next_number,
-            "status": "planned",
-            "created_at": now_iso,
-            "updated_at": now_iso,
-        }
+    new_iter = GoalIteration(
+        id=iter_id,
+        goal_id=goal_id,
+        iteration_number=next_number,
+        status="planned",
+        created_at=now_iso,
+        updated_at=now_iso
     )
+    db.add(new_iter)
     db.commit()
 
     return {
@@ -78,39 +80,30 @@ def list_iterations(
             "ai_discussion": [...], "created_at": "..."}, ...]
     """
     # 验证 goal 存在
-    goal_row = db.execute(
-        text("SELECT id FROM goals WHERE id = :id"),
-        {"id": goal_id}
-    ).fetchone()
-    if not goal_row:
+    from models.goal import Goal
+    goal = db.query(Goal).filter(Goal.id == goal_id).first()
+    if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    rows = db.execute(
-        text("""
-            SELECT id, goal_id, iteration_number, solution_id, score,
-                   status, ai_analysis, ai_discussion,
-                   started_at, completed_at, created_at, updated_at
-            FROM goal_iterations
-            WHERE goal_id = :gid
-            ORDER BY iteration_number ASC
-        """),
-        {"gid": goal_id}
-    ).mappings().fetchall()
+    # 使用 ORM 查询
+    rows = db.query(GoalIteration).filter(
+        GoalIteration.goal_id == goal_id
+    ).order_by(GoalIteration.iteration_number.asc()).all()
 
     iterations = []
     for r in rows:
         iterations.append({
-            "id": r.get("id"),
-            "iteration_number": r.get("iteration_number"),
-            "solution_id": r.get("solution_id"),
-            "score": r.get("score"),
-            "status": r.get("status"),
-            "ai_analysis": r.get("ai_analysis"),
-            "ai_discussion": _parse_discussion_list(r.get("ai_discussion")),
-            "started_at": r.get("started_at"),
-            "completed_at": r.get("completed_at"),
-            "created_at": r.get("created_at"),
-            "updated_at": r.get("updated_at"),
+            "id": r.id,
+            "iteration_number": r.iteration_number,
+            "solution_id": r.solution_id,
+            "score": r.score,
+            "status": r.status,
+            "ai_analysis": r.ai_analysis,
+            "ai_discussion": _parse_discussion_list(r.ai_discussion),
+            "started_at": r.started_at,
+            "completed_at": r.completed_at,
+            "created_at": r.created_at,
+            "updated_at": r.updated_at,
         })
 
     return iterations
@@ -124,10 +117,10 @@ def generate_analysis(goal_id: str, iter_id: str, db: Session = Depends(get_db))
     返回: {"analysis": "本轮分析...", "suggestion": "建议下一轮..."}
     """
     # 验证迭代记录存在
-    iter_row = db.execute(
-        text("SELECT id FROM goal_iterations WHERE id = :id AND goal_id = :gid"),
-        {"id": iter_id, "gid": goal_id}
-    ).fetchone()
+    iter_row = db.query(GoalIteration).filter(
+        GoalIteration.id == iter_id,
+        GoalIteration.goal_id == goal_id
+    ).first()
     if not iter_row:
         raise HTTPException(status_code=404, detail="Iteration not found")
 
@@ -138,14 +131,8 @@ def generate_analysis(goal_id: str, iter_id: str, db: Session = Depends(get_db))
     analysis_text = f"[分析]\n{result['analysis']}\n\n[建议]\n{result['suggestion']}"
     now_iso = datetime.utcnow().isoformat()
 
-    db.execute(
-        text("""
-            UPDATE goal_iterations
-            SET ai_analysis = :analysis, updated_at = :updated_at
-            WHERE id = :id
-        """),
-        {"analysis": analysis_text, "updated_at": now_iso, "id": iter_id}
-    )
+    iter_row.ai_analysis = analysis_text
+    iter_row.updated_at = now_iso
     db.commit()
 
     return result
@@ -162,15 +149,15 @@ def send_discussion(goal_id: str, iter_id: str, req: DiscussRequest, db: Session
     5. 返回完整对话列表 + 共识状态
     """
     # 验证迭代记录存在
-    iter_row = db.execute(
-        text("SELECT ai_discussion FROM goal_iterations WHERE id = :id AND goal_id = :gid"),
-        {"id": iter_id, "gid": goal_id}
-    ).mappings().fetchone()
+    iter_row = db.query(GoalIteration).filter(
+        GoalIteration.id == iter_id,
+        GoalIteration.goal_id == goal_id
+    ).first()
     if not iter_row:
         raise HTTPException(status_code=404, detail="Iteration not found")
 
     # 解析已有对话
-    discussion = _parse_discussion_list(iter_row.get("ai_discussion"))
+    discussion = _parse_discussion_list(iter_row.ai_discussion)
 
     # 追加人的消息
     now_iso = datetime.utcnow().isoformat()
@@ -191,18 +178,8 @@ def send_discussion(goal_id: str, iter_id: str, req: DiscussRequest, db: Session
     discussion.append(ai_msg)
 
     # 保存到数据库
-    db.execute(
-        text("""
-            UPDATE goal_iterations
-            SET ai_discussion = :discussion, updated_at = :updated_at
-            WHERE id = :id
-        """),
-        {
-            "discussion": json.dumps(discussion, ensure_ascii=False),
-            "updated_at": datetime.utcnow().isoformat(),
-            "id": iter_id,
-        }
-    )
+    iter_row.ai_discussion = json.dumps(discussion, ensure_ascii=False)
+    iter_row.updated_at = now_iso
     db.commit()
 
     # Sprint 78: 检测共识并自动应用（仅当发送方为 human 时）

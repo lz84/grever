@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime
 from typing import Optional, Dict, Any
 from loguru import logger
-WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), ".nexus-workspaces")
+WORKSPACE_ROOT = os.path.join(os.path.expanduser("~"), ".grever-workspaces")
 
 def _get_workspace_dir(goal_id: str) -> str:
     """Get the workspace directory for a given goal."""
@@ -178,7 +178,7 @@ def pull_workspace(goal_id: str) -> Dict[str, Any]:
             "error": error_message
         }
 
-def push_workspace(goal_id: str, commit_msg: str = "Auto-commit from Nexus") -> Dict[str, Any]:
+def push_workspace(goal_id: str, commit_msg: str = "Auto-commit from Grever") -> Dict[str, Any]:
     """
     Add, commit, and push changes to the Git repository.
     

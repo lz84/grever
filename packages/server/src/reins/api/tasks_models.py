@@ -112,7 +112,7 @@ class FailureLogEntry(BaseModel):
 
 class FailureLogResponse(BaseModel):
     """失败日志响应"""
-    task_id: int
+    task_id: str
     failures: List[FailureLogEntry]
 
 class RetryRequest(BaseModel):

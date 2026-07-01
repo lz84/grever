@@ -1,5 +1,5 @@
 """
-Nexus Reins (御) - Agent 协同驾驭框架
+Grever Reins (御) - Agent 协同驾驭框架
 服务端实现
 
 提供 6 大核心职责：
@@ -37,10 +37,10 @@ from persistence.base import DatabaseConfig
 from reins.common.grasp_client.caller import get_grasp_client
 
 __version__ = "0.1.0"
-__author__ = "Nexus Team"
+__author__ = "Grever Team"
 
 __version__ = "0.1.0"
-__author__ = "Nexus Team"
+__author__ = "Grever Team"
 
 # Lazy imports to avoid circular dependency with models.__init__
 def __getattr__(name: str):
@@ -158,15 +158,22 @@ class ReinsServer:
         return self._goal_repository.list(status)
 
     def update_goal_status(self, goal_id: str, status: GoalStatus) -> Goal:
-        """更新目标状态 — 直接查 DB + save"""
+        """更新目标状态 — 通过状态机"""
         goal = self._goal_repository.get(goal_id)
         if not goal:
             raise ValueError(f"Goal not found: {goal_id}")
-        goal.status = status
+        from reins.scheduler.statemachine import GoalStateMachine
+        from reins.common.database import get_db
+        with get_db() as db:
+            fsm = GoalStateMachine(db, goal_id)
+            if not fsm.can_transition(status):
+                raise ValueError(f"Invalid status transition: {goal.status} → {status}")
+            fsm.transition(status, reason="GoalManager update_goal_status", extra={"updated_at": int(datetime.now().timestamp())})
+            # Refresh goal from DB after transition
+            goal = self._goal_repository.get(goal_id)
         if status == GoalStatus.COMPLETED:
             from datetime import datetime
             goal.completed_at = datetime.now()
-        self._goal_repository.save(goal)
         return goal
 
     def decompose_goal(self, goal_id: str, agent_id: str = None) -> list:
@@ -289,12 +296,12 @@ class ReinsServer:
 
         old_status = task.status
         task.status = status
-        task.updated_at = __import__('datetime').datetime.now()
+        task.updated_at = int(__import__('datetime').datetime.now().timestamp())
 
         if status == TaskStatus.IN_PROGRESS and old_status == TaskStatus.TODO:
-            task.started_at = __import__('datetime').datetime.now()
+            task.started_at = int(__import__('datetime').datetime.now().timestamp())
         elif status == TaskStatus.DONE:
-            task.completed_at = __import__('datetime').datetime.now()
+            task.completed_at = int(__import__('datetime').datetime.now().timestamp())
 
         self._task_repository.save(task)
         return task
@@ -307,7 +314,7 @@ class ReinsServer:
 
         if depends_on not in task.dependencies:
             task.dependencies.append(depends_on)
-            task.updated_at = __import__('datetime').datetime.now()
+            task.updated_at = int(__import__('datetime').datetime.now().timestamp())
             self._task_repository.save(task)
 
         return task
@@ -321,14 +328,14 @@ class ReinsServer:
 
         if subtask_id not in parent.subtask_ids:
             parent.subtask_ids.append(subtask_id)
-            parent.updated_at = datetime.now()
+            parent.updated_at = int(datetime.now().timestamp())
             self._task_repository.save(parent)
 
         # 设置子任务的 parent_id
         child = self._task_repository.get(subtask_id)
         if child and child.parent_id != task_id:
             child.parent_id = task_id
-            child.updated_at = datetime.now()
+            child.updated_at = int(datetime.now().timestamp())
             self._task_repository.save(child)
 
         return parent
@@ -342,13 +349,13 @@ class ReinsServer:
 
         if subtask_id in parent.subtask_ids:
             parent.subtask_ids.remove(subtask_id)
-            parent.updated_at = datetime.now()
+            parent.updated_at = int(datetime.now().timestamp())
             self._task_repository.save(parent)
 
         child = self._task_repository.get(subtask_id)
         if child and child.parent_id == task_id:
             child.parent_id = None
-            child.updated_at = datetime.now()
+            child.updated_at = int(datetime.now().timestamp())
             self._task_repository.save(child)
 
         return parent

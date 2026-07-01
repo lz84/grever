@@ -82,8 +82,8 @@ class WorkflowsLogic:
 
     def activate_workflow(self, workflow_id: str):
         """MA-K233-1: Workflow 激活"""
-        from sqlalchemy import text
         from fastapi import HTTPException
+        from models.workflow import WorkflowStep
         session, workflow_repo, step_repo = self._get_repositories()
         try:
             workflow = workflow_repo.get(workflow_id)
@@ -97,19 +97,18 @@ class WorkflowsLogic:
             if not steps:
                 raise HTTPException(status_code=400, detail=f"No steps found for workflow: {workflow_id}")
             task_ids = []
-            with self._db_manager.engine.begin() as conn:
-                for step in steps:
-                    task_id = str(uuid.uuid4())
-                    conn.execute(tasks.insert().values(
-                        id=task_id, title=step.name, description=step.description or "",
-                        goal_id=workflow.goal_id, project_id=None, assigned_agent=step.agent_id,
-                        status="pending", priority=self._map_step_to_task_priority(step),
-                        dependencies=step.dependencies or [], depends_on=[],
-                        created_at=datetime.now(), updated_at=datetime.now(),
-                        started_at=None, completed_at=None,
-                        estimated_hours=step.timeout_seconds, actual_hours=None, result=None,
-                    ))
-                    task_ids.append(task_id)
+            for step in steps:
+                task_id = str(uuid.uuid4())
+                session.add(Task(
+                    id=task_id, title=step.name, description=step.description or "",
+                    goal_id=workflow.goal_id, project_id=None, assigned_agent=step.agent_id,
+                    status="pending", priority=self._map_step_to_task_priority(step),
+                    depends_on='[]',
+                    created_at=datetime.now(), updated_at=datetime.now(),
+                    started_at=None, completed_at=None,
+                ))
+                task_ids.append(task_id)
+            session.commit()
             workflow.status = WorkflowStatus.RUNNING
             workflow.started_at = datetime.now()
             workflow_repo.save(workflow)
@@ -137,14 +136,15 @@ class WorkflowsLogic:
 
     def _on_task_completed(self, event: WorkflowEvent):
         """处理 task_completed 事件"""
-        from sqlalchemy import text
+        from models.workflow import WorkflowStep
         task_id = event.data.get("task_id")
         workflow_id = event.data.get("workflow_id")
         if not workflow_id and self._db_manager:
             with self._db_manager.engine.connect() as conn:
-                r = conn.execute(text("SELECT id FROM workflows WHERE id = (SELECT workflow_id FROM workflow_steps WHERE id = :task_id)"), {"task_id": task_id}).fetchone()
-                if r:
-                    workflow_id = r.id
+                session = conn
+                step = session.query(WorkflowStep).filter(WorkflowStep.id == task_id).first()
+                if step:
+                    workflow_id = step.workflow_id
         if not workflow_id:
             return
         if not self._db_manager:
@@ -157,8 +157,8 @@ class WorkflowsLogic:
             step = step_repo.get(task_id)
             if not step:
                 with self._db_manager.engine.connect() as conn:
-                    r = conn.execute(text("SELECT workflow_id FROM workflow_steps WHERE id = :step_id"), {"step_id": task_id}).fetchone()
-                    if r:
+                    ws = conn.query(WorkflowStep).filter(WorkflowStep.id == task_id).first()
+                    if ws:
                         step = step_repo.get(task_id)
             if step:
                 step.status = WorkflowStepStatus.DONE

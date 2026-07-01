@@ -1,5 +1,4 @@
 ﻿import { useState, useEffect } from 'react'
-import { TASKS } from '../../../shared/api/paths'
 import { toast } from "sonner"
 import { ConfirmDialog, confirmAction } from "@/shared/utils/notify"
 import { Link, useSearchParams } from 'react-router-dom'
@@ -78,8 +77,7 @@ export default function TaskList() {
 
   // 获取统一状态列表（含 fallback）
   useEffect(() => {
-    fetch(TASKS.GET_STATUSES)
-      .then(r => r.json())
+    tasksApi.getStatuses()
       .then(data => {
         if (Array.isArray(data)) {
           setStatusOptions([

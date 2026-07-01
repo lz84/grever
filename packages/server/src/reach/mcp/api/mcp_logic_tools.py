@@ -7,6 +7,8 @@ from typing import List, Dict, Any
 from sqlalchemy import text
 
 from reins.common.database import get_db_manager
+from models import MCPServer, MCPTool
+
 
 class MCPToolsAndMatching:
     """MCP Tools 列表与 Agent-MCP 自动匹配"""
@@ -19,71 +21,69 @@ class MCPToolsAndMatching:
         """列出 MCP Server 的工具"""
         from fastapi import HTTPException
 
-        with self._db.engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT id FROM mcp_servers WHERE id = :id"),
-                {"id": server_id}
-            ).fetchone()
+        server = self._db.query(MCPServer).filter(MCPServer.id == server_id).first()
+        
+        if not server:
+            raise HTTPException(status_code=404, detail="MCP Server not found")
 
-            if not row:
-                raise HTTPException(status_code=404, detail="MCP Server not found")
+        tools = []
+        tool_rows = self._db.query(MCPTool).filter(
+            MCPTool.server_id == server_id
+        ).order_by(MCPTool.name).all()
 
-            tools = []
-            rows = conn.execute(
-                text("SELECT * FROM mcp_tools WHERE server_id = :server_id ORDER BY name"),
-                {"server_id": server_id}
-            ).fetchall()
+        for tool in tool_rows:
+            tools.append({
+                "id": tool.id,
+                "server_id": tool.server_id,
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "return_type": tool.return_type,
+            })
 
-            for row in rows:
-                d = dict(row._mapping)
-                tools.append({
-                    "id": d.get("id"),
-                    "server_id": d.get("server_id"),
-                    "name": d.get("name"),
-                    "description": d.get("description"),
-                    "parameters": d.get("parameters"),
-                    "return_type": d.get("return_type"),
-                })
-
-            return {"server_id": server_id, "tools": tools, "total": len(tools)}
+        return {"server_id": server_id, "tools": tools, "total": len(tools)}
 
     def match_agent_to_mcp(self, agent_id: str, agent_description: str):
         """Agent-MCP 自动匹配"""
-        with self._db.engine.connect() as conn:
-            servers = conn.execute(
-                text("SELECT * FROM mcp_servers WHERE status = 'active' ORDER BY created_at")
-            ).fetchall()
+        servers = self._db.query(MCPServer).filter(
+            MCPServer.status == 'active'
+        ).order_by(MCPServer.created_at).all()
 
-            matches = []
+        matches = []
 
-            for server_row in servers:
-                server = dict(server_row._mapping)
-                server_id = server.get("id")
+        for server in servers:
+            server_id = server.id
 
-                tools = []
-                tool_rows = conn.execute(
-                    text("SELECT * FROM mcp_tools WHERE server_id = :server_id"),
-                    {"server_id": server_id}
-                ).fetchall()
+            tools = []
+            tool_rows = self._db.query(MCPTool).filter(
+                MCPTool.server_id == server_id
+            ).all()
 
-                for tool_row in tool_rows:
-                    tools.append(dict(tool_row._mapping))
+            for tool in tool_rows:
+                tools.append({
+                    "id": tool.id,
+                    "server_id": tool.server_id,
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "return_type": tool.return_type,
+                })
 
-                score, reasons = self._helpers._calculate_match_score(agent_description, server, tools)
+            score, reasons = self._helpers._calculate_match_score(agent_description, server.to_dict(), tools)
 
-                if score > 0:
-                    matches.append({
-                        "server_id": server_id,
-                        "server_name": server.get("name", ""),
-                        "score": score,
-                        "match_reasons": reasons,
-                    })
+            if score > 0:
+                matches.append({
+                    "server_id": server_id,
+                    "server_name": server.name,
+                    "score": score,
+                    "match_reasons": reasons,
+                })
 
-            matches.sort(key=lambda x: x["score"], reverse=True)
+        matches.sort(key=lambda x: x["score"], reverse=True)
 
-            return {
-                "agent_id": agent_id,
-                "agent_description": agent_description,
-                "matches": matches,
-                "total": len(matches),
-            }
+        return {
+            "agent_id": agent_id,
+            "agent_description": agent_description,
+            "matches": matches,
+            "total": len(matches),
+        }

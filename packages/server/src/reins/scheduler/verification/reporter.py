@@ -22,6 +22,7 @@ def write_verification_comment(
 ) -> str:
     """Write a structured verification comment to task_comments table"""
     from sqlalchemy import text
+    from models import TaskComment
 
     status_icon = "PASS" if passed else ("DISPUTED" if passed is None else "FAIL")
     body = f"{status_icon} Verification {'passed' if passed else ('failed' if passed is False else 'disputed')} (cycle {cycle}/{max_cycles})\n\n{detail}"
@@ -33,25 +34,19 @@ def write_verification_comment(
         "checks": checks or [],
     })
 
-    with db.engine.connect() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO task_comments "
-                "(id, task_id, author, author_role, type, content, metadata, created_at) "
-                "VALUES (:id, :task_id, :author, :author_role, :type, :content, :metadata, :created_at)"
-            ),
-            {
-                "id": comment_id,
-                "task_id": task_id,
-                "author": verifier,
-                "author_role": "verifier",
-                "type": "verification_result",
-                "content": body,
-                "metadata": metadata,
-                "created_at": datetime.now(),
-            },
-        )
-        conn.commit()
+    # Create TaskComment ORM object
+    new_comment = TaskComment(
+        id=comment_id,
+        task_id=task_id,
+        author=verifier,
+        author_role="verifier",
+        type="verification_result",
+        content=body,
+        metadata=metadata,
+        created_at=datetime.now(),
+    )
+    db.add(new_comment)
+    db.commit()
 
     logger.info(
         f"[VerificationReporter] Written comment {comment_id} for task {task_id}, cycle={cycle}, passed={passed}"
@@ -62,6 +57,7 @@ def write_verification_comment(
 def write_redispatch_comment(db, task_id: str, executor_id: str, verification_comment: str) -> str:
     """写入 redispatch 记录到 task_comments"""
     from sqlalchemy import text
+    from models import TaskComment
 
     comment_id = f"cmt-{uuid.uuid4().hex[:8]}"
     content = (
@@ -73,54 +69,44 @@ def write_redispatch_comment(db, task_id: str, executor_id: str, verification_co
         "verification_comment": verification_comment[:500],
     })
 
-    with db.engine.connect() as conn:
-        conn.execute(
-            text(
-                "INSERT INTO task_comments "
-                "(id, task_id, author, author_role, type, content, metadata, created_at) "
-                "VALUES (:id, :task_id, :author, :author_role, :type, :content, :metadata, :created_at)"
-            ),
-            {
-                "id": comment_id,
-                "task_id": task_id,
-                "author": "verifier",
-                "author_role": "system",
-                "type": "redispatch",
-                "content": content,
-                "metadata": metadata,
-                "created_at": datetime.now(),
-            },
-        )
-        conn.commit()
+    # Create TaskComment ORM object
+    new_comment = TaskComment(
+        id=comment_id,
+        task_id=task_id,
+        author="verifier",
+        author_role="system",
+        type="redispatch",
+        content=content,
+        metadata=metadata,
+        created_at=datetime.now(),
+    )
+    db.add(new_comment)
+    db.commit()
 
     return comment_id
 
 
 def get_latest_verification_comment(db, task_id: str) -> str:
     """获取最近的 verification comment 内容"""
-    from sqlalchemy import text
+    from models import TaskComment
+    from sqlalchemy import desc
 
-    with db.engine.connect() as conn:
-        comment = conn.execute(
-            text(
-                "SELECT content FROM task_comments "
-                "WHERE task_id = :task_id AND type = 'verification_result' "
-                "ORDER BY created_at DESC LIMIT 1"
-            ),
-            {"task_id": task_id},
-        ).fetchone()
-        return comment.content if comment else ""
+    comment = db.query(TaskComment).filter(
+        TaskComment.task_id == task_id,
+        TaskComment.type == 'verification_result'
+    ).order_by(desc(TaskComment.created_at)).first()
+    
+    if not comment:
+        return ""
+    return comment.content
 
 
 def parse_checks_detail(db, task_id: str, result: str) -> list:
     """Parse acceptance criteria into check details for comment metadata"""
+    from models import Task
     from sqlalchemy import text
 
-    with db.engine.connect() as conn:
-        task = conn.execute(
-            text("SELECT acceptance_criteria FROM tasks WHERE id = :id"),
-            {"id": task_id},
-        ).fetchone()
+    task = db.query(Task).filter(Task.id == task_id).first()
 
     if not task or not task.acceptance_criteria:
         return []
@@ -193,14 +179,11 @@ def parse_agent_response(output: str, expected_checks: List[Dict]) -> List[Dict]
 
 def send_feishu_notification(db, task_id: str, error_message: str):
     """发送飞书通知 - 任务争议提醒"""
+    from models import Task
     from sqlalchemy import text
 
     try:
-        with db.engine.connect() as conn:
-            task = conn.execute(
-                text("SELECT title, description FROM tasks WHERE id = :id"),
-                {"id": task_id},
-            ).fetchone()
+        task = db.query(Task).filter(Task.id == task_id).first()
 
         if not task:
             logger.error(f"[VerificationReporter] Failed to get task details for notification: {task_id}")

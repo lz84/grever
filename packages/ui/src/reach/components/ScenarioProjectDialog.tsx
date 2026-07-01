@@ -10,6 +10,8 @@ import { Button } from '@/shared/components/ui/button'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/shared/components/ui/select'
+import { Separator } from '@/shared/components/ui/separator'
+import { Plus, Trash2 } from 'lucide-react'
 import { request } from '../../shared/utils/api'
 
 // ============================================================================
@@ -24,6 +26,7 @@ export interface ScenarioProjectFormData {
   description: string
   project_type: ProjectType
   condition_type: ConditionType
+  condition_data: Record<string, any> | null
   order_index: number
   capability_tags: string[]
 }
@@ -58,6 +61,262 @@ const CONDITION_TYPE_OPTIONS: { value: ConditionType; label: string }[] = [
   { value: 'human_input', label: '人工输入' },
 ]
 
+const INPUT_TYPE_OPTIONS = [
+  { value: 'text', label: '文本' },
+  { value: 'number', label: '数字' },
+  { value: 'multiline', label: '多行文本' },
+]
+
+const TIMEOUT_ACTION_OPTIONS = [
+  { value: 'use_default', label: '使用默认值' },
+  { value: 'abort', label: '中止' },
+  { value: 'retry', label: '重试' },
+  { value: 'escalate', label: '上报' },
+]
+
+const BRANCH_ACTION_OPTIONS = [
+  { value: 'continue', label: '继续' },
+  { value: 'skip', label: '跳过' },
+  { value: 'retry', label: '重试' },
+  { value: 'abort', label: '中止' },
+  { value: 'escalate', label: '上报' },
+]
+
+// ============================================================================
+// Condition Data Editor
+// ============================================================================
+
+function ConditionDataEditor({
+  conditionType,
+  value,
+  onChange,
+}: {
+  conditionType: ConditionType
+  value: Record<string, any> | null
+  onChange: (v: Record<string, any> | null) => void
+}) {
+  if (conditionType === 'none') {
+    return <p className="text-xs text-muted-foreground italic py-2">选择条件类型后可配置详细条件</p>
+  }
+
+  if (conditionType === 'auto_eval') {
+    const expr = value?.expr ?? ''
+    return (
+      <div className="space-y-2 mt-2 bg-muted/30 rounded-lg p-3">
+        <label className="text-xs font-medium text-muted-foreground">评估表达式</label>
+        <Input
+          value={expr}
+          onChange={(e) => onChange({ expr: e.target.value })}
+          placeholder="例如: risk_level > 3"
+          className="font-mono text-sm"
+        />
+      </div>
+    )
+  }
+
+  if (conditionType === 'human_decision') {
+    const prompt = value?.prompt ?? ''
+    const options: string[] = value?.options ?? ['']
+    const defaultOpt = value?.default ?? ''
+    const timeout = value?.timeout_minutes ?? 30
+    const branches: Record<string, string> = value?.branches ?? {}
+
+    const updateOptions = (idx: number, val: string) => {
+      const newOpts = [...options]
+      newOpts[idx] = val
+      const cleanedBranches: Record<string, string> = {}
+      newOpts.filter(Boolean).forEach((o) => {
+        cleanedBranches[o] = branches[o] ?? 'continue'
+      })
+      onChange({ ...value, options: newOpts, branches: cleanedBranches })
+    }
+
+    const addOption = () => {
+      onChange({ ...value, options: [...options, ''] })
+    }
+
+    const removeOption = (idx: number) => {
+      if (options.length <= 1) return
+      const newOpts = options.filter((_, i) => i !== idx)
+      const newBranches = { ...branches }
+      delete newBranches[options[idx]]
+      onChange({ ...value, options: newOpts, branches: newBranches })
+    }
+
+    return (
+      <div className="space-y-3 mt-2 bg-muted/30 rounded-lg p-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium">决策问题</label>
+          <Input
+            value={prompt}
+            onChange={(e) => onChange({ ...value, prompt: e.target.value })}
+            placeholder="需要人类决策的问题"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">选项（每行一个）</label>
+          {options.map((opt, idx) => (
+            <div key={idx} className="flex gap-2 items-center">
+              <Input
+                value={opt}
+                onChange={(e) => updateOptions(idx, e.target.value)}
+                placeholder={`选项 ${idx + 1}`}
+                className="flex-1 text-sm"
+              />
+              {options.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => removeOption(idx)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={addOption} className="text-xs h-7">
+            <Plus className="h-3 w-3 mr-1" /> 添加选项
+          </Button>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">默认选项</label>
+          <Select
+            value={defaultOpt}
+            onValueChange={(v) => onChange({ ...value, default: v })}
+          >
+            <SelectTrigger className="h-8">
+              <SelectValue placeholder="选择默认选项" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.filter(Boolean).map((opt) => (
+                <SelectItem key={opt} value={opt}>
+                  {opt}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">超时时间（分钟）</label>
+          <Input
+            type="number"
+            min={1}
+            value={timeout}
+            onChange={(e) => onChange({ ...value, timeout_minutes: parseInt(e.target.value) || 30 })}
+            className="h-8"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">分支动作</label>
+          {options.filter(Boolean).map((opt) => (
+            <div key={opt} className="flex gap-2 items-center">
+              <span className="text-sm min-w-[80px] truncate">{opt}</span>
+              <Select
+                value={branches[opt] || 'continue'}
+                onValueChange={(v) => {
+                  onChange({ ...value, branches: { ...branches, [opt]: v } })
+                }}
+              >
+                <SelectTrigger className="h-8 flex-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BRANCH_ACTION_OPTIONS.map((a) => (
+                    <SelectItem key={a.value} value={a.value}>
+                      {a.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (conditionType === 'human_input') {
+    const prompt = value?.prompt ?? ''
+    const inputType = value?.input_type ?? 'text'
+    const timeout = value?.timeout_minutes ?? 15
+    const timeoutAction = value?.timeout_action ?? 'use_default'
+    const defaultValue = value?.default_value ?? ''
+
+    return (
+      <div className="space-y-3 mt-2 bg-muted/30 rounded-lg p-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium">输入提示</label>
+          <Input
+            value={prompt}
+            onChange={(e) => onChange({ ...value, prompt: e.target.value })}
+            placeholder="请提供所需信息"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium">输入类型</label>
+            <Select
+              value={inputType}
+              onValueChange={(v) => onChange({ ...value, input_type: v })}
+            >
+              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {INPUT_TYPE_OPTIONS.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium">超时时间（分钟）</label>
+            <Input
+              type="number"
+              min={1}
+              value={timeout}
+              onChange={(e) => onChange({ ...value, timeout_minutes: parseInt(e.target.value) || 15 })}
+              className="h-8"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">超时动作</label>
+          <Select
+            value={timeoutAction}
+            onValueChange={(v) => onChange({ ...value, timeout_action: v })}
+          >
+            <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {TIMEOUT_ACTION_OPTIONS.map((a) => (
+                <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium">默认值</label>
+          <Input
+            value={defaultValue}
+            onChange={(e) => onChange({ ...value, default_value: e.target.value })}
+            placeholder="超时时的默认值"
+            className="h-8"
+          />
+        </div>
+      </div>
+    )
+  }
+
+  return null
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -75,6 +334,7 @@ export default function ScenarioProjectDialog({
   const [description, setDescription] = useState('')
   const [projectType, setProjectType] = useState<ProjectType>('mandatory')
   const [conditionType, setConditionType] = useState<ConditionType>('none')
+  const [conditionData, setConditionData] = useState<Record<string, any> | null>(null)
   const [orderIndex, setOrderIndex] = useState(0)
   const [capabilityTagsInput, setCapabilityTagsInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -87,6 +347,7 @@ export default function ScenarioProjectDialog({
         setDescription(initialData.description)
         setProjectType(initialData.project_type)
         setConditionType(initialData.condition_type)
+        setConditionData(initialData.condition_data ?? null)
         setOrderIndex(initialData.order_index)
         setCapabilityTagsInput(
           Array.isArray(initialData.capability_tags)
@@ -98,11 +359,18 @@ export default function ScenarioProjectDialog({
         setDescription('')
         setProjectType('mandatory')
         setConditionType('none')
+        setConditionData(null)
         setOrderIndex(0)
         setCapabilityTagsInput('')
       }
     }
   }, [open, initialData])
+
+  const handleConditionTypeChange = (v: string) => {
+    const ct = v as ConditionType
+    setConditionType(ct)
+    setConditionData(ct === 'none' ? null : {})
+  }
 
   const parseCapabilityTags = (): string[] => {
     return capabilityTagsInput
@@ -120,6 +388,7 @@ export default function ScenarioProjectDialog({
       description: description.trim(),
       project_type: projectType,
       condition_type: conditionType,
+      condition_data: conditionData,
       order_index: orderIndex,
       capability_tags: parseCapabilityTags(),
     }
@@ -160,9 +429,9 @@ export default function ScenarioProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="sm:max-w-[520px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? '编辑 Project' : '新建 Project'}</DialogTitle>
+          <DialogTitle>{isEdit ? '编辑工程' : '新建工程'}</DialogTitle>
           <DialogDescription>
             {isEdit ? '修改场景阶段/项目信息' : '为场景蓝图添加一个新的阶段/项目'}
           </DialogDescription>
@@ -205,7 +474,7 @@ export default function ScenarioProjectDialog({
             </div>
             <div>
               <label className="text-sm font-medium">条件类型</label>
-              <Select value={conditionType} onValueChange={v => setConditionType(v as ConditionType)}>
+              <Select value={conditionType} onValueChange={handleConditionTypeChange}>
                 <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {CONDITION_TYPE_OPTIONS.map(opt => (
@@ -215,6 +484,13 @@ export default function ScenarioProjectDialog({
               </Select>
             </div>
           </div>
+
+          {/* Condition Data Editor */}
+          <ConditionDataEditor
+            conditionType={conditionType}
+            value={conditionData}
+            onChange={setConditionData}
+          />
 
           {/* Order Index */}
           <div>
@@ -238,6 +514,8 @@ export default function ScenarioProjectDialog({
               className="mt-1"
             />
           </div>
+
+          <Separator />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>

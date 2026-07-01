@@ -1,12 +1,9 @@
-﻿import { useState, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { GRASP } from "../../shared/api/paths"
-import { BookOpen, Search, Plus, Edit, Trash2, CheckCircle, XCircle, Loader2, ExternalLink } from "lucide-react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/components/ui/card"
+import { BookOpen, Search, Loader2, Brain, Zap, Lightbulb, Info } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card"
 import { Badge } from "@/shared/components/ui/badge"
-import { Button } from "@/shared/components/ui/button"
 import { Input } from "@/shared/components/ui/input"
-import { Label } from "@/shared/components/ui/label"
-import { Textarea } from "@/shared/components/ui/textarea"
 import {
   Select,
   SelectContent,
@@ -14,63 +11,63 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/shared/components/ui/select"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/components/ui/dialog"
 
-interface KnowledgeItem {
-  id: string
-  title: string
+interface Cognition {
+  cognition_id: string
+  type: string
   content: string
-  category: string
   tags: string[]
-  source_url?: string
-  verified: boolean
-  created_at: string
-  updated_at: string
+  confidence: number
+  quality_score: number
+  source: { agent_id: string; task_id: string; channel: string }
+  status: string
+  domain: string
+  metadata: Record<string, unknown>
+  version: number
 }
 
-const CATEGORIES = [
-  { value: "architecture", label: "架构" },
-  { value: "api", label: "API" },
-  { value: "deployment", label: "部署" },
-  { value: "troubleshooting", label: "故障排查" },
-  { value: "best-practices", label: "最佳实践" },
-]
+const TYPE_ICONS: Record<string, React.ReactNode> = {
+  fact: <Info className="h-4 w-4 text-blue-500" />,
+  pattern: <Zap className="h-4 w-4 text-yellow-500" />,
+  lesson: <Lightbulb className="h-4 w-4 text-green-500" />,
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  fact: "事实",
+  pattern: "模式",
+  lesson: "经验",
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  published: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
+  pending_review: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+  archived: "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200",
+}
 
 export function CognitiveKnowledge() {
-  const [items, setItems] = useState<KnowledgeItem[]>([])
+  const [items, setItems] = useState<Cognition[]>([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState("")
-  const [filterCategory, setFilterCategory] = useState("all")
-  const [showCreate, setShowCreate] = useState(false)
-  const [editItem, setEditItem] = useState<KnowledgeItem | null>(null)
-  const [form, setForm] = useState({
-    title: "",
-    content: "",
-    category: "architecture",
-    tags: "",
-    source_url: "",
-  })
+  const [filterType, setFilterType] = useState("all")
+  const [filterDomain, setFilterDomain] = useState("all")
+  const [domains, setDomains] = useState<string[]>([])
 
   useEffect(() => {
     loadItems()
-  }, [filterCategory])
+  }, [filterType])
 
   const loadItems = async () => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ limit: "100" })
-      if (filterCategory !== "all") params.append("category", filterCategory)
-      const res = await fetch(GRASP.KNOWLEDGE_LIST + `?${params}`)
+      if (filterType !== "all") params.append("type", filterType)
+      const res = await fetch(`${GRASP.KNOWLEDGE_LIST}?${params}`)
       if (res.ok) {
         const data = await res.json()
-        setItems(data.items || [])
+        const list: Cognition[] = data.cognitions || []
+        setItems(list)
+        const d = [...new Set(list.map((c: Cognition) => c.domain).filter(Boolean))]
+        setDomains(d)
       } else {
         setItems([])
       }
@@ -82,92 +79,30 @@ export function CognitiveKnowledge() {
   }
 
   const filteredItems = items.filter((item) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      item.title.toLowerCase().includes(q) ||
-      item.content.toLowerCase().includes(q) ||
-      item.tags.some((t) => t.toLowerCase().includes(q))
-    )
+    if (search) {
+      const q = search.toLowerCase()
+      if (
+        !item.content.toLowerCase().includes(q) &&
+        !item.tags.some((t) => t.toLowerCase().includes(q)) &&
+        !item.cognition_id.toLowerCase().includes(q)
+      ) {
+        return false
+      }
+    }
+    if (filterDomain !== "all" && item.domain !== filterDomain) return false
+    return true
   })
-
-  const handleCreate = async () => {
-    if (!form.title.trim() || !form.content.trim()) return
-    try {
-      const res = await fetch(GRASP.KNOWLEDGE_LIST, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
-        }),
-      })
-      if (res.ok) {
-        setForm({ title: "", content: "", category: "architecture", tags: "", source_url: "" })
-        setShowCreate(false)
-        loadItems()
-      }
-    } catch (err) {
-      console.error("Failed to create:", err)
-    }
-  }
-
-  const handleUpdate = async () => {
-    if (!editItem || !form.title.trim()) return
-    try {
-      const res = await fetch(GRASP.COGNITION_GET(editItem.id), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
-        }),
-      })
-      if (res.ok) {
-        setEditItem(null)
-        loadItems()
-      }
-    } catch (err) {
-      console.error("Failed to update:", err)
-    }
-  }
-
-  const handleDelete = async (id: string) => {
-    try {
-      await fetch(GRASP.COGNITION_GET(id), { method: "DELETE" })
-      loadItems()
-    } catch (err) {
-      console.error("Failed to delete:", err)
-    }
-  }
-
-  const openEdit = (item: KnowledgeItem) => {
-    setEditItem(item)
-    setForm({
-      title: item.title,
-      content: item.content,
-      category: item.category,
-      tags: item.tags.join(", "),
-      source_url: item.source_url || "",
-    })
-  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <BookOpen className="h-8 w-8" />
-            认知知识库
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            管理知识库条目，支持分类、标签和来源追踪
-          </p>
-        </div>
-        <Button onClick={() => setShowCreate(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          添加知识
-        </Button>
+      <div>
+        <h1 className="text-3xl font-bold flex items-center gap-2">
+          <BookOpen className="h-8 w-8" />
+          认知知识库
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          展示系统自动积累的认知（事实、模式、经验），支持搜索和过滤
+        </p>
       </div>
 
       {/* Filters */}
@@ -175,23 +110,42 @@ export function CognitiveKnowledge() {
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="搜索标题、内容、标签..."
+            placeholder="搜索内容、标签、ID..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
           />
         </div>
-        <Select value={filterCategory} onValueChange={setFilterCategory}>
-          <SelectTrigger className="w-[180px]">
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-[140px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部分类</SelectItem>
-            {CATEGORIES.map((c) => (
-              <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-            ))}
+            <SelectItem value="all">全部类型</SelectItem>
+            <SelectItem value="fact">事实</SelectItem>
+            <SelectItem value="pattern">模式</SelectItem>
+            <SelectItem value="lesson">经验</SelectItem>
           </SelectContent>
         </Select>
+        {domains.length > 0 && (
+          <Select value={filterDomain} onValueChange={setFilterDomain}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部领域</SelectItem>
+              {domains.map((d) => (
+                <SelectItem key={d} value={d}>{d}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      {/* Stats */}
+      <div className="flex gap-4 text-sm text-muted-foreground">
+        <span>共 <strong className="text-foreground">{items.length}</strong> 条认知</span>
+        <span>筛选后 <strong className="text-foreground">{filteredItems.length}</strong> 条</span>
       </div>
 
       {/* Items */}
@@ -204,40 +158,41 @@ export function CognitiveKnowledge() {
       ) : filteredItems.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            暂无知识条目
+            暂无认知条目
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {filteredItems.map((item) => (
-            <Card key={item.id}>
+            <Card key={item.cognition_id}>
               <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1 flex-1">
-                    <CardTitle className="text-base">{item.title}</CardTitle>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">
-                        {CATEGORIES.find((c) => c.value === item.category)?.label || item.category}
-                      </Badge>
-                      {item.verified ? (
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-muted-foreground" />
-                      )}
-                    </div>
+                <div className="flex items-start gap-2">
+                  <div className="mt-1">
+                    {TYPE_ICONS[item.type] || <Brain className="h-4 w-4 text-muted-foreground" />}
                   </div>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(item)}>
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
+                  <div className="space-y-1 flex-1">
+                    <CardTitle className="text-base">{item.content.slice(0, 60)}{item.content.length > 60 ? "..." : ""}</CardTitle>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline">
+                        {TYPE_LABELS[item.type] || item.type}
+                      </Badge>
+                      {item.domain && (
+                        <Badge variant="secondary">{item.domain}</Badge>
+                      )}
+                      <Badge className={STATUS_COLORS[item.status] || ""}>
+                        {item.status === "published" ? "已发布" : item.status === "pending_review" ? "待审核" : item.status}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        置信度 {(item.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground line-clamp-3">{item.content}</p>
+                {item.content.length > 60 && (
+                  <p className="text-sm text-muted-foreground line-clamp-3">{item.content}</p>
+                )}
                 {item.tags.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {item.tags.map((tag) => (
@@ -245,150 +200,14 @@ export function CognitiveKnowledge() {
                     ))}
                   </div>
                 )}
-                {item.source_url && (
-                  <a
-                    href={item.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 flex items-center gap-1 text-xs text-blue-500 hover:underline"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    {item.source_url}
-                  </a>
-                )}
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Agent: {item.source?.agent_id || "—"} | 来源: {item.source?.channel || "—"}
+                </div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
-
-      {/* Create Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>添加知识条目</DialogTitle>
-            <DialogDescription>向知识库添加新的条目</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="create-title">标题 *</Label>
-              <Input
-                id="create-title"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="知识标题"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-content">内容 *</Label>
-              <Textarea
-                id="create-content"
-                rows={4}
-                value={form.content}
-                onChange={(e) => setForm({ ...form, content: e.target.value })}
-                placeholder="详细知识内容..."
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="create-category">分类</Label>
-                <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-tags">标签 (逗号分隔)</Label>
-                <Input
-                  id="create-tags"
-                  value={form.tags}
-                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                  placeholder="tag1, tag2"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="create-url">来源URL</Label>
-              <Input
-                id="create-url"
-                value={form.source_url}
-                onChange={(e) => setForm({ ...form, source_url: e.target.value })}
-                placeholder="https://..."
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>取消</Button>
-            <Button onClick={handleCreate}>保存</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Dialog */}
-      <Dialog open={!!editItem} onOpenChange={(o) => !o && setEditItem(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>编辑知识条目</DialogTitle>
-            <DialogDescription>修改知识库条目</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-title">标题 *</Label>
-              <Input
-                id="edit-title"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-content">内容 *</Label>
-              <Textarea
-                id="edit-content"
-                rows={4}
-                value={form.content}
-                onChange={(e) => setForm({ ...form, content: e.target.value })}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="edit-category">分类</Label>
-                <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-tags">标签 (逗号分隔)</Label>
-                <Input
-                  id="edit-tags"
-                  value={form.tags}
-                  onChange={(e) => setForm({ ...form, tags: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-url">来源URL</Label>
-              <Input
-                id="edit-url"
-                value={form.source_url}
-                onChange={(e) => setForm({ ...form, source_url: e.target.value })}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditItem(null)}>取消</Button>
-            <Button onClick={handleUpdate}>保存修改</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from models import Workflow
 from pydantic import BaseModel, Field
 
 class DagChange(BaseModel):
@@ -14,15 +14,15 @@ class DagChange(BaseModel):
     detail: str = Field(..., description="操作详情")
 
 def _get_workflow_dag(db: Session, workflow_id: str) -> Optional[dict]:
-    row = db.execute(text("SELECT id, name, status, dag FROM workflows WHERE id = :id"), {"id": workflow_id}).fetchone()
-    if not row:
+    workflow = db.query(Workflow).filter(Workflow.id == workflow_id).first()
+    if not workflow:
         return None
-    dag = json.loads(row.dag) if isinstance(row.dag, str) else (row.dag or {"nodes": [], "edges": []})
-    return {"id": row.id, "name": row.name, "status": row.status, "dag": dag}
+    dag = json.loads(workflow.dag) if isinstance(workflow.dag, str) else (workflow.dag or {"nodes": [], "edges": []})
+    return {"id": workflow.id, "name": workflow.name, "status": workflow.status, "dag": dag}
 
 def _save_dag(db: Session, workflow_id: str, dag: dict):
     now = datetime.now().isoformat()
-    db.execute(text("UPDATE workflows SET dag = :dag, updated_at = :now WHERE id = :id"), {"id": workflow_id, "dag": json.dumps(dag, ensure_ascii=False), "now": now})
+    db.query(Workflow).filter(Workflow.id == workflow_id).update({"dag": json.dumps(dag, ensure_ascii=False), "updated_at": now})
 
 def _edge_src(edge: dict) -> str:
     return str(edge.get("source", edge.get("from", "")))
@@ -70,6 +70,7 @@ def _sync_steps(db: Session, workflow_id: str, dag: dict) -> int:
         title = node.get("title", node.get("name", ""))
         desc = node.get("description", "")
         input_data = json.dumps({"node_type": node_type}, ensure_ascii=False)
+        # EXCEPTION: SQLite ON CONFLICT upsert, not easily expressible in ORM
         db.execute(text("""
             INSERT INTO workflow_steps
             (id, workflow_id, name, description, status, dependencies, "order", agent_id, input_data, output_data, retry_count, max_retries, created_at, updated_at)

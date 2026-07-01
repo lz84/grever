@@ -1,5 +1,4 @@
 ﻿import { useState, useEffect, useRef } from 'react';
-import { GOALS } from '../../../shared/api/paths';
 import { toast } from "sonner";
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
@@ -44,12 +43,13 @@ import {
 } from '@/shared/components/ui/select';
 import { getTaskStatusText, getTaskStatusBadgeClass, getGoalStatusText } from '../../../shared/utils/statusMap';
 import { getAgentName } from '../../../shared/utils/agentMap';
+import { getModeLabel } from '../../../shared/utils/modeDisplay';
 import { tasksApi, goalsApi, projectsApi, agentsApi, disputesApi, workflowsApi, scenariosApi, createScenarioFromGoal } from '../../../shared/utils/api';
 import { solutionsApi } from '@/evo/services/solutions';
 import type { Solution } from '@/evo/services/solutions';
 import type { Task, Goal, Project, Agent, Dispute, Workflow } from '../../../shared/utils/api';
 import IterationControlPanel from '@/reins/components/IterationControlPanel';
-import GoalDecomposePreview from '@/reins/components/GoalDecomposePreview';
+
 import GoalIterationPanel from '@/reins/components/GoalIterationPanel';
 import GoalVerifier from '@/reins/components/GoalVerifier';
 import GoalConstraints from '@/reins/components/GoalConstraints';
@@ -315,7 +315,7 @@ const ITER_STATUS_CFG: Record<string, { label: string; variant: string }> = {
 
 interface IterationHistoryTabProps {
   goalId: string;
-  mode: 'exploration' | 'optimization';
+  mode: 'research' | 'engineering';
 }
 
 interface AISuggestionCardProps {
@@ -432,22 +432,16 @@ function IterationHistoryTab({ goalId, mode }: IterationHistoryTabProps) {
   async function fetchIterations() {
     setLoading(true);
     try {
-      const resp = await fetch(GOALS.GET_ITERATIONS(goalId));
-      if (resp.ok) {
-        const data = await resp.json();
-        setIterations(Array.isArray(data) ? data : data.iterations || []);
-      } else setIterations([]);
+      const data = await goalsApi.getIterations(goalId);
+      setIterations(Array.isArray(data) ? data : data.iterations || []);
     } catch { setIterations([]); }
     finally { setLoading(false); }
   }
 
   async function fetchMessages(iterId: string) {
     try {
-      const resp = await fetch(GOALS.ITERATION_DISCUSS(goalId, iterId));
-      if (resp.ok) {
-        const data = await resp.json();
-        setMessages(prev => ({ ...prev, [iterId]: Array.isArray(data) ? data : data.messages || [] }));
-      }
+      const data: any = await goalsApi.iterationDiscuss(goalId, iterId);
+      setMessages(prev => ({ ...prev, [iterId]: Array.isArray(data) ? data : data.messages || [] }));
     } catch { /* silent */ }
   }
 
@@ -474,13 +468,8 @@ function IterationHistoryTab({ goalId, mode }: IterationHistoryTabProps) {
   async function handleConfirm(iterId: string, response: string) {
     setConfirmingId(iterId);
     try {
-      const resp = await fetch(GOALS.ITERATION_CONSENSUS(goalId, iterId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ human_response: response }),
-      });
-      if (resp.ok) { await fetchIterations(); toast.success('已确认'); }
-      else { toast.error('确认失败'); }
+      await goalsApi.iterationConsensus(goalId, iterId, { human_response: response });
+      await fetchIterations(); toast.success('已确认');
     } catch { toast.error('确认失败'); }
     finally { setConfirmingId(null); }
   }
@@ -488,13 +477,8 @@ function IterationHistoryTab({ goalId, mode }: IterationHistoryTabProps) {
   async function handleAdjust(iterId: string, response: string, adjustments: object) {
     setAdjustingId(iterId);
     try {
-      const resp = await fetch(GOALS.ITERATION_ANALYSIS(goalId, iterId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ human_response: response, adjustments }),
-      });
-      if (resp.ok) { await fetchIterations(); toast.success('已调整,已创建下一轮'); }
-      else { toast.error('调整失败'); }
+      await goalsApi.iterationAnalysis(goalId, iterId, { human_response: response, adjustments });
+      await fetchIterations(); toast.success('已调整,已创建下一轮');
     } catch { toast.error('调整失败'); }
     finally { setAdjustingId(null); }
   }
@@ -502,13 +486,8 @@ function IterationHistoryTab({ goalId, mode }: IterationHistoryTabProps) {
   async function handleSkip(iterId: string) {
     setConfirmingId(iterId);
     try {
-      const resp = await fetch(GOALS.ITERATION_CONSENSUS(goalId, iterId), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ human_response: '跳过本轮' }),
-      });
-      if (resp.ok) { await fetchIterations(); toast.success('已跳过'); }
-      else { toast.error('跳过失败'); }
+      await goalsApi.iterationConsensus(goalId, iterId, { human_response: '跳过本轮' });
+      await fetchIterations(); toast.success('已跳过');
     } catch { toast.error('跳过失败'); }
     finally { setConfirmingId(null); }
   }
@@ -565,10 +544,10 @@ function IterationHistoryTab({ goalId, mode }: IterationHistoryTabProps) {
               )}
 
               {/* 模式特定信息 */}
-              {mode === 'exploration' && iter.solution_name && (
+              {mode === 'research' && iter.solution_name && (
                 <span className="text-xs text-blue-600 font-medium">方案: {iter.solution_name}</span>
               )}
-              {mode === 'optimization' && analysis && (
+              {mode === 'research' && analysis && (
                 <span className="text-xs text-muted-foreground truncate flex-1">
                   {summary}{analysis.length > 80 ? '...' : ''}
                 </span>
@@ -679,10 +658,9 @@ export default function GoalDetail() {
   // When entering edit mode, sync draft with current value
   // Goal mode edit
   const [goalModeEditing, setGoalModeEditing] = useState(false);
-  const [goalModeDraft, setGoalModeDraft] = useState<'normal' | 'exploration' | 'optimization'>('normal');
-  const [optimizationTargetDraft, setOptimizationTargetDraft] = useState<string | undefined>(undefined);
-  const [convergenceThresholdDraft, setConvergenceThresholdDraft] = useState<string>('0.05');
-  const [maxRoundsDraft, setMaxRoundsDraft] = useState<string>('10');
+  const [goalModeDraft, setGoalModeDraft] = useState<'engineering' | 'research'>('engineering');
+  const [diversityDraft, setDiversityDraft] = useState<string | undefined>(undefined);
+  const [portfolioSizeDraft, setPortfolioSizeDraft] = useState<string>('5');
   const [savingMode, setSavingMode] = useState(false);
 
   // Workflow generation
@@ -750,10 +728,9 @@ export default function GoalDetail() {
 
   async function openModeEditor() {
     const gm = (goal as any)?.mode;
-    setGoalModeDraft(gm || 'normal');
-    setOptimizationTargetDraft((goal as any)?.optimization_target || undefined);
-    setConvergenceThresholdDraft(String((goal as any)?.convergence_threshold ?? 0.05));
-    setMaxRoundsDraft(String((goal as any)?.max_rounds ?? 10));
+    setGoalModeDraft((gm as 'engineering' | 'research') || 'engineering');
+    setDiversityDraft((goal as any)?.diversity || undefined);
+    setPortfolioSizeDraft(String((goal as any)?.portfolio_size ?? 5));
     setGoalModeEditing(true);
   }
 
@@ -762,19 +739,16 @@ export default function GoalDetail() {
     setSavingMode(true);
     try {
       const modeData: {
-        mode: 'normal' | 'exploration' | 'optimization';
-        optimization_target?: string;
-        convergence_threshold?: number;
-        max_rounds?: number;
+        mode: 'engineering' | 'research';
+        diversity?: string;
+        portfolio_size?: number;
       } = {
         mode: goalModeDraft,
       };
-      if (goalModeDraft === 'exploration' || goalModeDraft === 'optimization') {
-        modeData.optimization_target = optimizationTargetDraft || undefined;
-        const ct = parseFloat(convergenceThresholdDraft);
-        if (!isNaN(ct)) modeData.convergence_threshold = ct;
-        const mr = parseInt(maxRoundsDraft);
-        if (!isNaN(mr)) modeData.max_rounds = mr;
+      if (goalModeDraft === 'research') {
+        modeData.diversity = diversityDraft || undefined;
+        const ps = parseInt(portfolioSizeDraft);
+        if (!isNaN(ps)) modeData.portfolio_size = ps;
       }
       await solutionsApi.setGoalMode(id, modeData);
       setGoalModeEditing(false);
@@ -805,7 +779,7 @@ export default function GoalDetail() {
     );
   }
 
-  const mode = (goal as any)?.mode || 'normal';
+  const mode = (goal as any)?.mode || 'engineering';
   const completedProjects = projects.filter(p => p.status === 'completed' || p.status === 'done');
   const hasCompletedProjects = completedProjects.length > 0;
   const goalIsDraft = goal.status === 'draft';
@@ -848,6 +822,14 @@ export default function GoalDetail() {
             </div>
             <h2 className="text-xl font-bold text-slate-900 mt-1">{goal.title || '未命名目标'}</h2>
             {goal.description && <p className="text-sm text-slate-500 mt-1">{goal.description}</p>}
+            {/* 主智能体 */}
+            {(goal as any).main_agent_id && (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-xs">
+                  <Zap className="w-3 h-3 mr-0.5" />主智能体: {getAgentName((goal as any).main_agent_id)}
+                </Badge>
+              </div>
+            )}
             {/* Goal Capability Tags */}
             {goal.capability_tags && Object.values(goal.capability_tags).flat().length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -875,9 +857,7 @@ export default function GoalDetail() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link to={`/goals/${id}/tree`}><GitBranch className="w-4 h-4 text-green-600" />目标分解</Link>
-          </Button>
+
           {/* 一键分配 */}
           <Button variant="outline" size="sm" onClick={async () => {
             try {
@@ -906,9 +886,8 @@ export default function GoalDetail() {
               return (
                 <Button size="sm" className="bg-amber-500 hover:bg-amber-600" onClick={async () => {
                   try {
-                    const r = await fetch(GOALS.PAUSE(goal.id), { method: 'POST' });
-                    if (r.ok) { setGoal({ ...goal!, status: 'paused' }); }
-                    else { console.error('Pause failed:', await r.json()); }
+                    await goalsApi.pause(goal.id);
+                    setGoal({ ...goal!, status: 'paused' });
                   } catch (e) { console.error('Pause failed:', e); }
                 }}>
                   <Zap className="w-4 h-4" />
@@ -918,33 +897,30 @@ export default function GoalDetail() {
               return (
                 <Button size="sm" onClick={async () => {
                   try {
-                    const r = await fetch(GOALS.RESUME(goal.id), { method: 'POST' });
-                    if (r.ok) { setGoal({ ...goal!, status: 'in_progress' }); }
-                    else { console.error('Resume failed:', await r.json()); }
+                    await goalsApi.resume(goal.id);
+                    setGoal({ ...goal!, status: 'in_progress' });
                   } catch (e) { console.error('Resume failed:', e); }
                 }}>
                   <RefreshCw className="w-4 h-4" />
                 </Button>
               );
             } else {
-              const needsIteration = mode === 'exploration' || mode === 'optimization';
+              const needsIteration = mode === 'research';
               return (
                 <Button size="sm" onClick={async () => {
                   try {
-                    const r = await fetch(GOALS.ACTIVATE(goal.id), { method: 'POST' });
-                    if (r.ok) {
-                      setGoal({ ...goal!, status: 'in_progress' });
-                      if (needsIteration) {
-                        try {
-                          await solutionsApi.startIteration(goal.id);
-                          toast.success('目标已激活,迭代已启动');
-                        } catch {
-                          toast.success('目标已激活');
-                        }
-                      } else {
+                    await goalsApi.activate(goal.id);
+                    setGoal({ ...goal!, status: 'in_progress' });
+                    if (needsIteration) {
+                      try {
+                        await solutionsApi.startIteration(goal.id);
+                        toast.success('目标已激活,迭代已启动');
+                      } catch {
                         toast.success('目标已激活');
                       }
-                    } else { console.error('Activate failed:', await r.json()); }
+                    } else {
+                      toast.success('目标已激活');
+                    }
                   } catch (e) { console.error('Activate failed:', e); }
                 }}>
                   <Play className="w-4 h-4" />
@@ -975,7 +951,7 @@ export default function GoalDetail() {
               </p>
               <Button size="sm" variant="outline" className="mt-2 border-amber-300 text-amber-700 hover:bg-amber-100" onClick={async () => {
                 try {
-                  await fetch(GOALS.RESUME(goal.id), { method: 'POST' });
+                  await goalsApi.resume(goal.id);
                   setGoal({ ...goal, status: 'in_progress' });
                 } catch (e) { console.error('Failed to update goal status:', e); }
               }}>
@@ -995,13 +971,7 @@ export default function GoalDetail() {
               <Zap className="w-4 h-4 text-amber-500" />
               <CardTitle className="text-sm">运行模式</CardTitle>
               {(() => {
-                if (mode === 'exploration') {
-                  return <Badge variant="warning">探索模式</Badge>;
-                }
-                if (mode === 'optimization') {
-                  return <Badge variant="default">迭代模式</Badge>;
-                }
-                return <Badge variant="secondary">常规模式</Badge>;
+                return <Badge variant={mode === 'research' ? 'warning' : 'default'}>{getModeLabel(mode)}</Badge>;
               })()}
             </div>
             <Button variant="ghost" size="sm" onClick={openModeEditor}>
@@ -1017,9 +987,8 @@ export default function GoalDetail() {
                 <label className="block text-sm font-medium text-slate-700 mb-2">选择模式</label>
                 <div className="flex gap-2">
                   {[
-                    { value: 'normal' as const, label: '常规模式', desc: '标准执行流程' },
-                    { value: 'exploration' as const, label: '探索模式', desc: '自动迭代优化方案' },
-                    { value: 'optimization' as const, label: '迭代模式', desc: '多轮迭代收敛优化' },
+                    { value: 'engineering' as const, label: '工程模式', desc: '标准执行流程' },
+                    { value: 'research' as const, label: '研究模式', desc: '多方案探索，找到最优解' },
                   ].map(opt => (
                     <button
                       key={opt.value}
@@ -1038,56 +1007,42 @@ export default function GoalDetail() {
                 </div>
               </div>
 
-              {/* Exploration/Optimization mode fields */}
-              {(goalModeDraft === 'exploration' || goalModeDraft === 'optimization') && (
+              {/* Research mode fields */}
+              {goalModeDraft === 'research' && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 space-y-4">
                   <div className="flex items-center gap-1.5 text-amber-800 text-sm font-medium">
                     <Settings className="w-4 h-4" />
-                    探索模式参数
+                    研究模式参数
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">优化目标</label>
-                    <Select value={optimizationTargetDraft} onValueChange={setOptimizationTargetDraft}>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">多样性策略</label>
+                    <Select value={diversityDraft} onValueChange={setDiversityDraft}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择优化目标" />
+                        <SelectValue placeholder="选择多样性策略" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="duration">🏃 最短工期</SelectItem>
-                        <SelectItem value="cost">💰 最低成本</SelectItem>
-                        <SelectItem value="overall">⚖️ 综合最优</SelectItem>
+                        <SelectItem value="best">🏆 最优策略</SelectItem>
+                        <SelectItem value="portfolio">📊 组合策略</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  {diversityDraft === 'portfolio' && (
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">收敛阈值</label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        max="1"
-                        value={convergenceThresholdDraft}
-                        onChange={(e) => setConvergenceThresholdDraft(e.target.value)}
-                        placeholder="0.05"
-                      />
-                      <p className="text-xs text-slate-400 mt-1">默认 0.05(5%)</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">最大轮次</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">组合数量</label>
                       <Input
                         type="number"
                         step="1"
                         min="1"
-                        max="100"
-                        value={maxRoundsDraft}
-                        onChange={(e) => setMaxRoundsDraft(e.target.value)}
-                        placeholder="10"
+                        max="50"
+                        value={portfolioSizeDraft}
+                        onChange={(e) => setPortfolioSizeDraft(e.target.value)}
+                        placeholder="5"
                       />
-                      <p className="text-xs text-slate-400 mt-1">默认 10</p>
+                      <p className="text-xs text-slate-400 mt-1">组合中包含的方案数量，默认 5</p>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -1105,55 +1060,25 @@ export default function GoalDetail() {
             <div className="space-y-3">
               {/* Display current mode info */}
               {(() => {
-                if (mode === 'exploration') {
+                if (mode === 'research') {
                   return (
-                    <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <span className="text-slate-500">优化目标:</span>
+                        <span className="text-slate-500">多样性策略:</span>
                         <span className="ml-2 font-medium text-slate-800">
-                          {(() => { const ot = (goal as any)?.optimization_target; return ({ duration: '最短工期', cost: '最低成本', overall: '综合最优' } as Record<string, string>)[ot] || '未设置'; })()}
+                          {(({ best: '最优', portfolio: '组合' } as Record<string, string>)[(goal as any)?.diversity as string] || '未设置')}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-500">收敛阈值:</span>
+                        <span className="text-slate-500">组合数量:</span>
                         <span className="ml-2 font-medium text-slate-800">
-                          {(goal as any)?.convergence_threshold != null ? `${((goal as any).convergence_threshold * 100).toFixed(1)}%` : '5%'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">最大轮次:</span>
-                        <span className="ml-2 font-medium text-slate-800">
-                          {(goal as any)?.max_rounds ?? '10'}
+                          {(goal as any)?.portfolio_size ?? 5}
                         </span>
                       </div>
                     </div>
                   );
                 }
-                if (mode === 'optimization') {
-                  return (
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-slate-500">优化目标:</span>
-                        <span className="ml-2 font-medium text-slate-800">
-                          {(() => { const ot = (goal as any)?.optimization_target; return ({ duration: '最短工期', cost: '最低成本', overall: '综合最优' } as Record<string, string>)[ot] || '未设置'; })()}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">收敛阈值:</span>
-                        <span className="ml-2 font-medium text-slate-800">
-                          {(goal as any)?.convergence_threshold != null ? `${((goal as any).convergence_threshold * 100).toFixed(1)}%` : '5%'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">最大轮次:</span>
-                        <span className="ml-2 font-medium text-slate-800">
-                          {(goal as any)?.max_rounds ?? '10'}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                }
-                return <p className="text-sm text-slate-500">当前使用常规模式,按标准流程执行</p>;
+                return <p className="text-sm text-slate-500">当前使用工程模式,按标准流程执行</p>;
               })()}
             </div>
           )}
@@ -1168,13 +1093,13 @@ export default function GoalDetail() {
           <CardContent className="p-4 space-y-3">
             <div className="flex justify-between text-sm mb-2">
               <span className="text-slate-500">
-                {mode === 'normal' ? '执行进度' : mode === 'optimization' ? '收敛进度' : '探索进度'}
+                {mode === 'engineering' ? '执行进度' : '研究进度'}
               </span>
               <span className="mono font-bold text-slate-900">
-                {mode === 'normal' ? `${goalProgress}%` : mode === 'optimization' ? '-' : '-'}
+                {mode === 'engineering' ? `${goalProgress}%` : '-'}
               </span>
             </div>
-            {mode === 'normal' ? (
+            {mode === 'engineering' ? (
               <>
                 <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                   <div className="h-full bg-blue-500 transition-all" style={{ width: `${goalProgress}%` }} />
@@ -1185,9 +1110,7 @@ export default function GoalDetail() {
               </>
             ) : (
               <div className="text-xs text-slate-500 mt-1">
-                {mode === 'optimization'
-                  ? `收敛阈值 ${((goal as any)?.convergence_threshold ?? 0.05) * 100}% · 最大 ${(goal as any)?.max_rounds ?? 10} 轮 · 查看下方迭代面板`
-                  : `优化目标: ${({ duration: '最短工期', cost: '最低成本', overall: '综合最优' }[(goal as any)?.optimization_target as string] || '-')}`}
+                {`多样性: ${(({ best: '最优', portfolio: '组合' } as Record<string, string>)[(goal as any)?.diversity as string] || '-')} · 查看下方研究面板`}
               </div>
             )}
           </CardContent>
@@ -1245,32 +1168,46 @@ export default function GoalDetail() {
 
 
       {/* Decompose Preview */}
-      {goalIsDraft && !hasCompletedProjects && (
-        <GoalDecomposePreview goalId={id!} onDecompose={fetchData} />
-      )}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-purple-500" />
+            <CardTitle className="text-sm">分解图</CardTitle>
+          </div>
+          <CardDescription>查看或生成目标的任务分解结构</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild className="w-full">
+            <Link to={`/goals/${id}/diagram`}>
+              <GitBranch className="w-4 h-4 mr-2" />
+              查看分解图
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
 
-      {/* Constraints — 仅探索/迭代模式显示 */}
-      {id && (mode === 'exploration' || mode === 'optimization') && (
+      {/* Constraints — 仅研究模式显示 */}
+      {id && mode === 'research' && (
         <GoalConstraints goalId={id!} />
       )}
 
 
 
 
-      {/* Sprint 68-73 / Sprint 80: 迭代控制面板(探索模式 + 迭代模式) */}
-      {(mode === 'exploration' || mode === 'optimization') && id && (
+      {/* Sprint 68-73 / Sprint 80: 迭代控制面板(研究模式) */}
+      {mode === 'research' && id && (
         <IterationControlPanel goalId={id} goalStatus={goal.status ?? undefined} onSolutionUpdate={fetchData} />
       )}
 
 
-      {/* Sprint 79/80: 方案对比(仅探索模式) */}
-      {mode === 'exploration' && id && (
+      {/* Sprint 79/80: 方案对比(研究模式) */}
+      {mode === 'research' && id && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <Target className="w-4 h-4 text-blue-500" />
               <CardTitle className="text-sm">方案对比</CardTitle>
-              <Badge variant="warning" className="text-[10px] px-1.5 h-5">探索模式</Badge>
+              <Badge variant="warning" className="text-[10px] px-1.5 h-5">研究模式</Badge>
             </div>
             <CardDescription>比较不同方案的优劣,选择最优执行路径</CardDescription>
           </CardHeader>
@@ -1461,20 +1398,18 @@ export default function GoalDetail() {
       </div>
 
 
-      {/* Sprint 80b: 迭代历史(探索模式 + 迭代模式,传入 mode 区分视角) */}
-      {(mode === 'exploration' || mode === 'optimization') && id && (
+      {/* Sprint 80b: 迭代历史(研究模式,传入 mode 区分视角) */}
+      {mode === 'research' && id && (
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-blue-500" />
               <CardTitle className="text-sm">
-                {mode === 'optimization' ? '迭代历史' : '方案历史'}
+                {'方案历史'}
               </CardTitle>
             </div>
             <CardDescription>
-              {mode === 'optimization'
-                ? '查看迭代记录,AI 建议与讨论'
-                : '查看方案生成历史,AI 分析与建议'}
+              {'查看方案生成历史,AI 分析与建议'}
             </CardDescription>
           </CardHeader>
           <CardContent>

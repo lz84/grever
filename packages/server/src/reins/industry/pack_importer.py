@@ -1,7 +1,7 @@
 """
 PackImporter - Industry Pack Import Module
 
-Imports industry packs from .nexus-pack (zip) files.
+Imports industry packs from .grever-pack (zip) files.
 Validates structure, checksums, compatibility, and dependencies before transactional DB write.
 
 Sprint 110: B110-1
@@ -15,8 +15,9 @@ import zipfile
 from io import BytesIO
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import Table, MetaData
 from sqlalchemy.orm import Session
+from models.industry_tag import IndustryPack, IndustryPackVersion
 
 
 # Constants
@@ -84,7 +85,7 @@ def _check_path_traversal(filename: str) -> None:
 
 class PackImporter:
     """
-    Imports industry packs from .nexus-pack (zip) files.
+    Imports industry packs from .grever-pack (zip) files.
 
     Usage:
         importer = PackImporter(db_session)
@@ -99,7 +100,7 @@ class PackImporter:
         Import an industry pack from zip file bytes.
 
         Args:
-            file_bytes: Raw bytes of the .nexus-pack zip file.
+            file_bytes: Raw bytes of the .grever-pack zip file.
             strategy: Import strategy - "create" (fail if exists),
                      "upsert" (update if exists), "force" (overwrite).
 
@@ -164,7 +165,7 @@ class PackImporter:
         try:
             zf = zipfile.ZipFile(BytesIO(file_bytes))
         except zipfile.BadZipFile:
-            raise InvalidPackError("Invalid zip file: not a valid .nexus-pack archive")
+            raise InvalidPackError("Invalid zip file: not a valid .grever-pack archive")
 
         # Check for zip bomb: number of files
         if len(zf.namelist()) > 1000:
@@ -315,10 +316,7 @@ class PackImporter:
             return
 
         for dep_id in dependencies:
-            row = self.db.execute(
-                text("SELECT id FROM industry_packs WHERE id = :id"),
-                {"id": dep_id},
-            ).fetchone()
+            row = self.db.query(IndustryPack).filter(IndustryPack.id == dep_id).first()
 
             if not row:
                 raise DependencyMissingError(
@@ -332,24 +330,12 @@ class PackImporter:
 
     def _get_existing_pack(self, pack_id: str) -> Optional[dict]:
         """Get existing pack info if it exists."""
-        row = self.db.execute(
-            text("SELECT * FROM industry_packs WHERE id = :id"),
-            {"id": pack_id},
-        ).fetchone()
+        pack = self.db.query(IndustryPack).filter(IndustryPack.id == pack_id).first()
 
-        if not row:
+        if not pack:
             return None
 
-        columns = list(row.keys()) if hasattr(row, "keys") else [
-            "id", "name", "industry", "version", "description",
-            "tags_count", "scenarios_count", "skills_count", "status",
-            "created_at", "updated_at", "pack_type", "base_pack_id",
-            "format_version", "author", "license",
-            "compatibility_min_version", "compatibility_max_version",
-            "source_checksum", "source_signature", "import_source",
-            "import_source_file", "dependencies",
-        ]
-        return {columns[i]: row[i] for i in range(len(columns))}
+        return pack.to_dict()
 
     def _check_strategy(self, strategy: str, existing: Optional[dict], pack_id: str) -> str:
         """
@@ -389,84 +375,51 @@ class PackImporter:
             if action == "created":
                 # Insert new pack
                 deps_json = json.dumps(manifest.get("dependencies", []), ensure_ascii=False)
-                self.db.execute(
-                    text("""
-                        INSERT INTO industry_packs
-                        (id, name, industry, version, description, tags_count, scenarios_count,
-                         skills_count, status, created_at, updated_at, pack_type, base_pack_id,
-                         format_version, author, license, compatibility_min_version,
-                         compatibility_max_version, source_checksum, source_signature,
-                         import_source, import_source_file, dependencies)
-                        VALUES
-                        (:id, :name, :industry, :version, :description, :tags_count,
-                         :scenarios_count, :skills_count, :status, :created_at, :updated_at,
-                         :pack_type, :base_pack_id, :format_version, :author, :license,
-                         :compatibility_min_version, :compatibility_max_version,
-                         :source_checksum, :source_signature, 'imported', NULL, :dependencies)
-                    """),
-                    {
-                        "id": pack_id,
-                        "name": manifest.get("pack_name", ""),
-                        "industry": manifest.get("industry", ""),
-                        "version": manifest.get("version", "1.0.0"),
-                        "description": manifest.get("description", ""),
-                        "tags_count": 0,
-                        "scenarios_count": 0,
-                        "skills_count": 0,
-                        "status": "active",
-                        "created_at": now,
-                        "updated_at": now,
-                        "pack_type": manifest.get("pack_type", "standard"),
-                        "base_pack_id": manifest.get("base_pack_id"),
-                        "format_version": manifest.get("format_version", "1.0"),
-                        "author": manifest.get("author"),
-                        "license": manifest.get("license", "proprietary"),
-                        "compatibility_min_version": None,
-                        "compatibility_max_version": None,
-                        "source_checksum": _sha256(files.get("checksum.json", b"")),
-                        "source_signature": None,
-                        "dependencies": deps_json,
-                    },
+                pack = IndustryPack(
+                    id=pack_id,
+                    name=manifest.get("pack_name", ""),
+                    industry=manifest.get("industry", ""),
+                    version=manifest.get("version", "1.0.0"),
+                    description=manifest.get("description", ""),
+                    tags_count=0,
+                    scenarios_count=0,
+                    skills_count=0,
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                    pack_type=manifest.get("pack_type", "standard"),
+                    base_pack_id=manifest.get("base_pack_id"),
+                    format_version=manifest.get("format_version", "1.0"),
+                    author=manifest.get("author"),
+                    license=manifest.get("license", "proprietary"),
+                    compatibility_min_version=None,
+                    compatibility_max_version=None,
+                    source_checksum=_sha256(files.get("checksum.json", b"")),
+                    source_signature=None,
+                    import_source="imported",
+                    import_source_file=None,
+                    dependencies=deps_json,
                 )
+                self.db.add(pack)
             else:
                 # Update existing pack (upsert/force)
                 deps_json = json.dumps(manifest.get("dependencies", []), ensure_ascii=False)
-                self.db.execute(
-                    text("""
-                        UPDATE industry_packs SET
-                            name = :name,
-                            industry = :industry,
-                            version = :version,
-                            description = :description,
-                            status = :status,
-                            updated_at = :updated_at,
-                            pack_type = :pack_type,
-                            base_pack_id = :base_pack_id,
-                            format_version = :format_version,
-                            author = :author,
-                            license = :license,
-                            source_checksum = :source_checksum,
-                            import_source = 'imported',
-                            dependencies = :dependencies
-                        WHERE id = :id
-                    """),
-                    {
-                        "id": pack_id,
-                        "name": manifest.get("pack_name", ""),
-                        "industry": manifest.get("industry", ""),
-                        "version": manifest.get("version", "1.0.0"),
-                        "description": manifest.get("description", ""),
-                        "status": "active",
-                        "updated_at": now,
-                        "pack_type": manifest.get("pack_type", "standard"),
-                        "base_pack_id": manifest.get("base_pack_id"),
-                        "format_version": manifest.get("format_version", "1.0"),
-                        "author": manifest.get("author"),
-                        "license": manifest.get("license", "proprietary"),
-                        "source_checksum": _sha256(files.get("checksum.json", b"")),
-                        "dependencies": deps_json,
-                    },
-                )
+                self.db.query(IndustryPack).filter(IndustryPack.id == pack_id).update({
+                    'name': manifest.get("pack_name", ""),
+                    'industry': manifest.get("industry", ""),
+                    'version': manifest.get("version", "1.0.0"),
+                    'description': manifest.get("description", ""),
+                    'status': "active",
+                    'updated_at': now,
+                    'pack_type': manifest.get("pack_type", "standard"),
+                    'base_pack_id': manifest.get("base_pack_id"),
+                    'format_version': manifest.get("format_version", "1.0"),
+                    'author': manifest.get("author"),
+                    'license': manifest.get("license", "proprietary"),
+                    'source_checksum': _sha256(files.get("checksum.json", b"")),
+                    'import_source': 'imported',
+                    'dependencies': deps_json,
+                }, synchronize_session=False)
 
             # Insert version record
             contents = manifest.get("contents", [])
@@ -476,50 +429,21 @@ class PackImporter:
                 "skills": len([c for c in contents if c.get("content_type") == "skill"]),
             }
             version_id = f"{pack_id}-v{manifest.get('version', '1.0.0')}-{now}-{uuid.uuid4().hex[:8]}"
-            self.db.execute(
-                text("""
-                    INSERT INTO industry_pack_versions
-                    (id, pack_id, version, action, source_file, source_checksum, stats,
-                     imported_at, notes, created_at)
-                    VALUES
-                    (:id, :pack_id, :version, :action, :source_file, :source_checksum,
-                     :stats, :imported_at, :notes, :created_at)
-                """),
-                {
-                    "id": version_id,
-                    "pack_id": pack_id,
-                    "version": manifest.get("version", "1.0.0"),
-                    "action": action,
-                    "source_file": None,
-                    "source_checksum": _sha256(files.get("checksum.json", b"")),
-                    "stats": json.dumps(stats, ensure_ascii=False),
-                    "imported_at": now,
-                    "notes": f"Imported via API ({action})",
-                    "created_at": now,
-                },
+            version = IndustryPackVersion(
+                id=version_id,
+                pack_id=pack_id,
+                version=manifest.get("version", "1.0.0"),
+                action=action,
+                source_file=None,
+                source_checksum=_sha256(files.get("checksum.json", b"")),
+                stats=json.dumps(stats, ensure_ascii=False),
+                imported_at=now,
+                notes=f"Imported via API ({action})",
+                created_at=now,
             )
+            self.db.add(version)
 
-            # For force strategy, delete existing contents first
-            if action == "forced":
-                self.db.execute(
-                    text("DELETE FROM industry_pack_contents WHERE pack_id = :pack_id"),
-                    {"pack_id": pack_id},
-                )
-
-            # Insert contents
-            for content in contents:
-                self.db.execute(
-                    text("""
-                        INSERT OR IGNORE INTO industry_pack_contents
-                        (pack_id, content_type, content_id)
-                        VALUES (:pack_id, :content_type, :content_id)
-                    """),
-                    {
-                        "pack_id": pack_id,
-                        "content_type": content.get("content_type", ""),
-                        "content_id": content.get("content_id", ""),
-                    },
-                )
+            # Note: industry_pack_contents table is removed. Content tracking relies on pack_id FKs.
 
             self.db.commit()
 

@@ -1,5 +1,5 @@
 """
-Nexus Reins 数据库表定义
+Grever Reins 数据库表定义
 使用 SQLAlchemy Core，支持多数据库后端
 """
 
@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     JSON,
+    Text,
     Index,
 )
 from datetime import datetime
@@ -215,6 +216,7 @@ heartbeat_logs = Table(
     Column("load", Integer, comment="当时负载"),
     Column("current_tasks", Integer, comment="当时任务数"),
     Column("extra", JSON, comment="额外数据"),
+    Column("raw_payload", Text, comment="完整心跳载荷 JSON"),
     Index("idx_heartbeat_agent_timestamp", "agent_id", "timestamp"),
 )
 
@@ -357,4 +359,18 @@ roles = Table(
     Column("updated_at", DateTime, nullable=False, default=datetime.now, comment="更新时间"),
     Index("idx_roles_status", "status"),
     Index("idx_roles_level", "level"),
+)
+
+# ========== 能力标签表 (capability_tags) ==========
+# Sprint 87: Agentic Loop 自检标准来源
+capability_tags = Table(
+    "capability_tags",
+    metadata,
+    Column("id", String(36), primary_key=True, comment="标签 ID"),
+    Column("name", String(100), nullable=False, unique=True, comment="标签名称"),
+    Column("parent_tag", String(36), comment="父标签 ID（支持标准继承）"),
+    Column("standards", JSON, default=list, comment="过程标准列表"),
+    Column("created_at", Integer, comment="创建时间 Unix timestamp"),
+    Column("updated_at", Integer, comment="更新时间 Unix timestamp"),
+    Index("idx_cap_parent", "parent_tag"),
 )
